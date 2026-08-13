@@ -5,6 +5,9 @@
 
 export const SECONDS_PER_DAY = 86400;
 
+/** The J2000.0 epoch instant (JD 2451545.0 TT): 2000-01-01T12:00:00Z. */
+export const J2000_EPOCH_MS = Date.UTC(2000, 0, 1, 12);
+
 /** Warp presets: sim-seconds that pass per real second. */
 export const WARP_PRESETS = {
   realTime: 1,
@@ -58,4 +61,19 @@ export class SimClock {
     if (this.isPaused) return;
     this.currentDays += (realSeconds * this.warpRate) / SECONDS_PER_DAY;
   }
+}
+
+/**
+ * Days past J2000.0 for a real `date` (TT ≈ UTC for the sim's purposes).
+ */
+export function dateToDaysSinceJ2000(date: Date): number {
+  return (date.getTime() - J2000_EPOCH_MS) / (SECONDS_PER_DAY * 1000);
+}
+
+/**
+ * ISO-8601 timestamp of a sim date (days past J2000.0), e.g. the calendar
+ * date readout and the e2e "sim date = today" seam.
+ */
+export function simDateToIso(days: number): string {
+  return new Date(J2000_EPOCH_MS + days * SECONDS_PER_DAY * 1000).toISOString();
 }

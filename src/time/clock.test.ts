@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SECONDS_PER_DAY, SimClock, WARP_PRESETS } from "./clock";
+import { dateToDaysSinceJ2000, SECONDS_PER_DAY, SimClock, simDateToIso, WARP_PRESETS } from "./clock";
 
 describe("warp presets", () => {
   it("maps each preset to the exact sim-seconds per real-second", () => {
@@ -62,5 +62,41 @@ describe("SimClock", () => {
     expect(clock.simDate).toBe(3);
     expect(clock.warp).toBe(WARP_PRESETS.dayPerSecond);
     expect(clock.paused).toBe(false);
+  });
+});
+
+describe("dateToDaysSinceJ2000", () => {
+  it("maps the J2000.0 epoch instant to 0", () => {
+    expect(dateToDaysSinceJ2000(new Date(Date.UTC(2000, 0, 1, 12)))).toBe(0);
+  });
+
+  it("counts whole days from the epoch", () => {
+    expect(dateToDaysSinceJ2000(new Date(Date.UTC(2000, 0, 2, 12)))).toBe(1);
+    expect(dateToDaysSinceJ2000(new Date(Date.UTC(2000, 0, 3, 12)))).toBe(2);
+  });
+
+  it("counts before the epoch as negative", () => {
+    expect(dateToDaysSinceJ2000(new Date(Date.UTC(1999, 11, 31, 12)))).toBe(-1);
+  });
+
+  it("agrees with the Horizons oracle date used by the orbit tests", () => {
+    // 2026-08-13 00:00 UT is 9720.5 days past J2000.0 — the same epoch the
+    // kepler.test.ts Horizons oracle is measured at, so this cross-checks the
+    // two modules against the same independent source.
+    expect(dateToDaysSinceJ2000(new Date(Date.UTC(2026, 7, 13)))).toBeCloseTo(9720.5, 10);
+  });
+});
+
+describe("simDateToIso", () => {
+  it("renders the J2000.0 epoch as its calendar date", () => {
+    expect(simDateToIso(0)).toBe("2000-01-01T12:00:00.000Z");
+  });
+
+  it("renders the Horizons oracle date", () => {
+    expect(simDateToIso(9720.5)).toBe("2026-08-13T00:00:00.000Z");
+  });
+
+  it("wraps whole days", () => {
+    expect(simDateToIso(1.5)).toBe("2000-01-03T00:00:00.000Z");
   });
 });
