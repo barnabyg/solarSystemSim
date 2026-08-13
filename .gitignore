@@ -77,3 +77,9 @@ export_presets.cfg
 # --- Simulation data / outputs ---
 *.csv.bak
 *.h5.bak
+
+# --- Playwright ---
+test-results/
+playwright-report/
+blob-report/
+
