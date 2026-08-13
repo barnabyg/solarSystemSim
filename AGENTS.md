@@ -11,3 +11,7 @@ Default vocabulary, five canonical labels: `needs-triage`, `needs-info`, `ready-
 ### Domain docs
 
 Single-context layout: one root `CONTEXT.md` plus `docs/adr/` for ADRs. See `docs/agents/domain.md`.
+
+## Working preferences
+
+The user starts the dev server themselves — never launch it on their behalf. In hand-offs, give the command to run and what to look for, but don't start the app.
