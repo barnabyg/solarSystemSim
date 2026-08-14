@@ -8,6 +8,12 @@
  * as `sizeScale * sqrt(km)` clamped to a readable range. A true-scale toggle
  * arrives with its own ticket.
  *
+ * Moon orbits (ticket #8) need their own mapping: a moon's planetocentric
+ * distance is tiny in AU, so the raw distance scale would bury every moon
+ * inside its enlarged primary's display sphere. Moons are placed relative to
+ * the primary's display radius instead — the physical ratio (orbit ÷ primary
+ * radius) survives, heavily compressed, floored above the disc.
+ *
  * Pure functions, no rendering or I/O — the seam under test.
  */
 
@@ -35,6 +41,22 @@ export const COMPRESSED_SCALE: CompressedScaleConfig = {
   maxBodyRadius: 0.85
 };
 
+/** One astronomical unit, exactly 149,597,870.7 km (IAU definition). */
+export const AU_KM = 149597870.7;
+
+/**
+ * Moon orbits never render inside the primary's display sphere: the closest a
+ * moon can sit is `MOON_ORBIT_MIN_RADII` × the primary's display radius.
+ */
+export const MOON_ORBIT_MIN_RADII = 1.6;
+/**
+ * How much of the real orbit-to-primary ratio survives. The Moon really
+ * orbits at 60 Earth radii; with a compression of 0.08 it displays at
+ * 1.6 + 59 × 0.08 ≈ 6.3 Earth radii — clear of the disc yet visibly
+ * planet-hugging, and moons of one primary keep their physical order.
+ */
+export const MOON_ORBIT_COMPRESSION = 0.08;
+
 /**
  * Compressed display distance for a semi-major axis `au` [AU].
  */
@@ -59,6 +81,38 @@ export function scalePosition(p: Vec3, config: CompressedScaleConfig = COMPRESSE
   const r = Math.hypot(p.x, p.y, p.z);
   if (r === 0) return { x: 0, y: 0, z: 0 };
   const s = compressedDistance(r, config) / r;
+  return { x: p.x * s, y: p.y * s, z: p.z * s };
+}
+
+/**
+ * Compressed display radius of a moon's orbit around its primary: the moon's
+ * planetocentric distance `moonDistanceAu` [AU] is expressed in units of the
+ * primary's physical radius, compressed so the rendered system stays compact,
+ * and floored above the primary's disc so the moon never renders inside it.
+ */
+export function compressedMoonOrbitRadius(
+  primaryRadiusKm: number,
+  primaryDisplayRadius: number,
+  moonDistanceAu: number
+): number {
+  const radii = (moonDistanceAu * AU_KM) / primaryRadiusKm;
+  const displayRadii = MOON_ORBIT_MIN_RADII + Math.max(radii - 1, 0) * MOON_ORBIT_COMPRESSION;
+  return primaryDisplayRadius * displayRadii;
+}
+
+/**
+ * Map a planetocentric position [AU] to the compressed display frame around
+ * the primary (whose mesh sits at the origin of this frame): direction and
+ * orbit shape survive, the radius becomes the compressed moon orbit distance.
+ */
+export function scaleMoonPosition(
+  primaryRadiusKm: number,
+  primaryDisplayRadius: number,
+  p: Vec3
+): Vec3 {
+  const r = Math.hypot(p.x, p.y, p.z);
+  if (r === 0) return { x: 0, y: 0, z: 0 };
+  const s = compressedMoonOrbitRadius(primaryRadiusKm, primaryDisplayRadius, r) / r;
   return { x: p.x * s, y: p.y * s, z: p.z * s };
 }
 

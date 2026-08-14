@@ -17,7 +17,10 @@
  * The rig owns the camera and all camera state. The scene supplies three
  * hooks — body world positions, preferred focus distances, and picking
  * (which body is under a screen point) — so the rig stays generic. Input is
- * attached to the renderer's canvas.
+ * attached to the renderer's canvas. The app supplies optional events so UI
+ * can follow inspection: `onInspect` fires whenever a body is focused
+ * (canvas click or a direct `focus()` call) and `onRelease` whenever focus
+ * returns to free flight.
  *
  * Behavior is verified at the rendering-smoke / UI-interaction e2e seams
  * (ADR-0004); this module is not unit-tested.
@@ -79,6 +82,15 @@ export interface CameraRigHooks {
   pickBody(clientX: number, clientY: number): string | null;
 }
 
+/** Optional inspection events the app can subscribe to (ticket #9 fact card). */
+export interface CameraRigEvents {
+  /** Fired whenever a body is focused — by a canvas click or a direct
+   *  `focus()` call (e.g. clicking a body label). */
+  onInspect?(name: string): void;
+  /** Fired whenever focus is released back to free flight. */
+  onRelease?(): void;
+}
+
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -87,6 +99,7 @@ export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
 
   private readonly hooks: CameraRigHooks;
+  private readonly events: CameraRigEvents;
   private mode: CameraMode = "free";
   private focused: string | null = null;
   /** Current orbit/look point, world units. */
@@ -112,8 +125,9 @@ export class CameraRig {
   private dragMoved = 0;
   private readonly tmp = new THREE.Vector3();
 
-  constructor(aspect: number, hooks: CameraRigHooks) {
+  constructor(aspect: number, hooks: CameraRigHooks, events: CameraRigEvents = {}) {
     this.hooks = hooks;
+    this.events = events;
     this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 2000);
     this.apply();
     // Prime the inverse matrix so the first frame's label projection is
@@ -168,6 +182,7 @@ export class CameraRig {
     this.endDistance = Math.max(this.hooks.getFocusDistance(name), MIN_DISTANCE);
     this.transition = 0;
     this.distanceLocked = false;
+    this.events.onInspect?.(name);
   }
 
   /** Release focus and return to free flight from the current vantage. */
@@ -179,6 +194,7 @@ export class CameraRig {
     this.distanceLocked = false;
     // The target stays where it was — free flight resumes from the point
     // being orbited, so the view does not jump.
+    this.events.onRelease?.();
   }
 
   /** Current view state — also the e2e observation seam. */

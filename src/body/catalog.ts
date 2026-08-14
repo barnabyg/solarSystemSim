@@ -363,3 +363,18 @@ export const ASTEROID_BELT: AsteroidBeltParameters = {
   halfThicknessAu: 0.5,
   particleCount: 6000
 };
+
+/**
+ * Unified fact lookup for the fact card (ticket #9): any body's canonical
+ * name resolves to its `BodyFacts`, across the Sun, planets, moons, and
+ * dwarf planets. Returns null for unknown names.
+ */
+export function factsFor(name: string): BodyFacts | null {
+  if (name === SUN_NAME) return SUN_FACTS;
+  return (
+    PLANET_FACTS[name as PlanetName] ??
+    MOON_FACTS[name as MoonName] ??
+    DWARF_FACTS[name as DwarfName] ??
+    null
+  );
+}

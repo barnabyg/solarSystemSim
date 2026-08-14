@@ -10,6 +10,7 @@ import {
   SUN,
   SUN_FACTS,
   SUN_NAME,
+  factsFor,
   type BodyFacts,
   type BodyVisual
 } from "./catalog";
@@ -169,6 +170,13 @@ describe("full body catalog", () => {
     expect(Object.keys(DWARF_FACTS).sort()).toEqual([...DWARF_NAMES].sort());
     expect(Object.keys(MOON_VISUALS).sort()).toEqual([...MOON_NAMES].sort());
     expect(Object.keys(DWARF_VISUALS).sort()).toEqual([...DWARF_NAMES].sort());
+  });
+
+  it("resolves facts for every body through the unified lookup", () => {
+    for (const name of ALL_BODY_NAMES) {
+      expect(factsFor(name)).toBeDefined();
+    }
+    expect(factsFor("Not a body")).toBeNull();
   });
 
   it("gives every moon and dwarf planet orbital elements", () => {

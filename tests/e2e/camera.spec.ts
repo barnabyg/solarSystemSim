@@ -25,6 +25,32 @@ function cameraState(page: Page) {
   });
 }
 
+/**
+ * A point near the screen center that is provably empty canvas, re-checked
+ * before each gesture: at the overview zoom the 27 labels overlap and can
+ * cover the center, and a drag or wheel that starts on a label is swallowed
+ * by the label layer instead of reaching the canvas.
+ */
+function clearCanvasPoint(page: Page): Promise<{ x: number; y: number }> {
+  return page.evaluate(() => {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const candidates: Array<[number, number]> = [
+      [cx, cy],
+      [cx, cy + 40],
+      [cx + 70, cy + 30],
+      [cx - 70, cy + 30],
+      [cx, cy + 80],
+      [cx, cy - 60]
+    ];
+    for (const [x, y] of candidates) {
+      const el = document.elementFromPoint(x, y);
+      if (el && el.tagName === "CANVAS") return { x, y };
+    }
+    return { x: cx, y: cy + 80 };
+  });
+}
+
 test("opens Sun-centered in free flight with the hint visible", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#boot-status")).toHaveText("booted");
@@ -56,14 +82,12 @@ test("drag rotates and pans the camera; scroll zooms", async ({ page }) => {
   await expect(page.locator("#boot-status")).toHaveText("booted");
 
   const before = await cameraState(page);
-  const vp = page.viewportSize()!;
-  const cx = vp.width / 2;
-  const cy = vp.height / 2;
 
   // Left-drag rotates: yaw swings, a purely horizontal drag leaves pitch alone.
-  await page.mouse.move(cx, cy);
+  let start = await clearCanvasPoint(page);
+  await page.mouse.move(start.x, start.y);
   await page.mouse.down();
-  await page.mouse.move(cx + 160, cy, { steps: 8 });
+  await page.mouse.move(start.x + 160, start.y, { steps: 8 });
   await page.mouse.up();
   const afterRotate = await cameraState(page);
   expect(Math.abs(afterRotate.yaw - before.yaw)).toBeGreaterThan(0.2);
@@ -71,9 +95,10 @@ test("drag rotates and pans the camera; scroll zooms", async ({ page }) => {
 
   // Right-drag pans: the view target moves in the camera's view plane.
   const targetBefore = afterRotate.target;
-  await page.mouse.move(cx, cy);
+  start = await clearCanvasPoint(page);
+  await page.mouse.move(start.x, start.y);
   await page.mouse.down({ button: "right" });
-  await page.mouse.move(cx + 120, cy, { steps: 8 });
+  await page.mouse.move(start.x + 120, start.y, { steps: 8 });
   await page.mouse.up({ button: "right" });
   const afterPan = await cameraState(page);
   const panDistance = Math.hypot(
@@ -86,6 +111,8 @@ test("drag rotates and pans the camera; scroll zooms", async ({ page }) => {
 
   // Scroll zooms in, then out.
   const distanceBefore = afterPan.distance;
+  start = await clearCanvasPoint(page);
+  await page.mouse.move(start.x, start.y);
   await page.mouse.wheel(0, -240);
   const zoomedIn = await cameraState(page);
   expect(zoomedIn.distance).toBeLessThan(distanceBefore - 1);
@@ -144,8 +171,19 @@ test("clicking empty space releases focus back to free flight", async ({ page })
   await page.goto("/");
   await expect(page.locator("#boot-status")).toHaveText("booted");
 
-  // Focus Earth via its label (the DOM click path).
-  await page.locator('[data-body="Earth"]').click();
+  // Focus Earth through the canvas at its projected position (the label
+  // floats above the anchor point where the body actually is). Clicking the
+  // label itself is ambiguous at the overview zoom: the Moon orbits close to
+  // Earth, and its label can cover Earth's, routing the click to the wrong
+  // body. Retry while the sim runs — a covering label clears in a moment.
+  const earth = page.locator('[data-body="Earth"]');
+  await expect(earth).toBeVisible();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const box = (await earth.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + 1.5 * box.height);
+    if ((await page.locator("#camera-state").textContent()) === "focus:Earth") break;
+    await page.waitForTimeout(600);
+  }
   await expect(page.locator("#camera-state")).toHaveText("focus:Earth");
 
   // Let the focus transition settle: the "no jump on release" check below
@@ -171,10 +209,10 @@ test("clicking empty space releases focus back to free flight", async ({ page })
 
   // Free flight works from there: a drag still rotates the camera.
   const yawBefore = after.yaw;
-  const vp = page.viewportSize()!;
-  await page.mouse.move(vp.width / 2, vp.height / 2);
+  const start = await clearCanvasPoint(page);
+  await page.mouse.move(start.x, start.y);
   await page.mouse.down();
-  await page.mouse.move(vp.width / 2 - 100, vp.height / 2, { steps: 6 });
+  await page.mouse.move(start.x - 100, start.y, { steps: 6 });
   await page.mouse.up();
   expect(Math.abs((await cameraState(page)).yaw - yawBefore)).toBeGreaterThan(0.1);
 });
