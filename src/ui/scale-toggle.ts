@@ -10,8 +10,6 @@
 import type { ScaleMode } from "../scale/scale";
 
 export interface ScaleToggleOptions {
-  /** Mode at startup. Defaults to compressed (the spec default). */
-  initialMode?: ScaleMode;
   /** Fired with the new mode on every toggle click. */
   onChange(mode: ScaleMode): void;
 }
@@ -24,7 +22,8 @@ const MODE_LABEL: Record<ScaleMode, string> = {
 
 export function initScaleToggle(options: ScaleToggleOptions): void {
   const button = getElement<HTMLButtonElement>("scale-toggle");
-  let mode: ScaleMode = options.initialMode ?? "compressed";
+  // Compressed is the spec-mandated default (ADR-0002).
+  let mode: ScaleMode = "compressed";
 
   function sync(): void {
     button.textContent = MODE_LABEL[mode];

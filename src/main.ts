@@ -59,19 +59,19 @@ solarSystem = new SolarSystemScene(clock, cameraRig.camera, app);
 // findable at real distances. The active mode is mirrored to the #scale-mode
 // seam (compressed | true) for the e2e suite.
 const scaleModeEl = document.getElementById("scale-mode");
-if (scaleModeEl) {
-  scaleModeEl.textContent = "compressed";
-  scaleModeEl.dataset.mode = "compressed";
+/** Mirror the active scale mode to the #scale-mode seam for the e2e suite. */
+function mirrorScaleMode(mode: string): void {
+  if (!scaleModeEl) return;
+  scaleModeEl.textContent = mode;
+  scaleModeEl.dataset.mode = mode;
 }
+mirrorScaleMode("compressed");
 initScaleToggle({
   onChange: (mode) => {
     solarSystem.setScaleMode(mode);
     const ratio = solarSystem.systemScaleRatio;
     cameraRig.adjustScale(mode === "true" ? ratio : 1 / ratio);
-    if (scaleModeEl) {
-      scaleModeEl.textContent = mode;
-      scaleModeEl.dataset.mode = mode;
-    }
+    mirrorScaleMode(mode);
   }
 });
 

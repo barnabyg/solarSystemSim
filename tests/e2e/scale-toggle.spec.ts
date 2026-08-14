@@ -133,34 +133,49 @@ test("the camera reframes so the true-scale system stays in view", async ({ page
   for (const v of after.target) expect(Math.abs(v)).toBeLessThan(0.01);
 });
 
-test("focus survives the toggle and keeps tracking the body", async ({ page }) => {
+test("focus survives the toggle and follows the body out to its real distance", async ({ page }) => {
   await boot(page);
 
-  // Focus Earth through the canvas at its projected position (the label
+  // Focus Neptune through the canvas at its projected position (the label
   // floats above the anchor point where the body actually is), retrying
-  // while the sim runs — a passing moon's label can cover the anchor.
-  const earth = page.locator('[data-body="Earth"]');
-  await expect(earth).toBeVisible();
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const box = (await earth.boundingBox())!;
+  // while the sim runs — an overlapping label can steal the click, and a
+  // day per second of sim time drifts it clear.
+  const neptune = page.locator('[data-body="Neptune"]');
+  await expect(neptune).toBeVisible();
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const box = (await neptune.boundingBox())!;
     await page.mouse.click(box.x + box.width / 2, box.y + 1.5 * box.height);
-    if ((await page.locator("#camera-state").textContent()) === "focus:Earth") break;
+    if ((await page.locator("#camera-state").textContent()) === "focus:Neptune") break;
     await page.waitForTimeout(600);
   }
-  await expect(page.locator("#camera-state")).toHaveText("focus:Earth");
+  await expect(page.locator("#camera-state")).toHaveText("focus:Neptune");
+  // Let the focus transition settle before measuring the view.
+  await page.waitForTimeout(1000);
+  const before = await cameraState(page);
 
   await page.locator("#scale-toggle").click();
   await expect(page.locator("#scale-mode")).toHaveText("true");
 
-  // The camera stays focused on Earth through the flip.
-  await expect(page.locator("#camera-state")).toHaveText("focus:Earth");
-  const state = await cameraState(page);
-  expect(state.mode).toBe("focus");
-  expect(state.focused).toBe("Earth");
+  // The camera stays focused on Neptune through the flip; let the reframe
+  // transition settle, then confirm the view.
+  await expect(page.locator("#camera-state")).toHaveText("focus:Neptune");
+  await page.waitForTimeout(1000);
+  const after = await cameraState(page);
+  expect(after.mode).toBe("focus");
+  expect(after.focused).toBe("Neptune");
 
-  // ...and keeps orbiting it: Earth still projects to the screen center.
+  // ...and follows it out to its real distance: Neptune jumps from its
+  // compressed ~16 units to ~90, and the camera rides along (Earth is the
+  // degenerate case at 1 AU, so an outer body proves the adjustment).
+  const distBefore = Math.hypot(...before.position);
+  const distAfter = Math.hypot(...after.position);
+  expect(distAfter).toBeGreaterThan(distBefore * 1.5);
+  expect(distAfter).toBeGreaterThan(60);
+
+  // The focused body keeps projecting to the screen center — the view stays
+  // coherent at the real distance.
   const vp = page.viewportSize()!;
-  const box = (await earth.boundingBox())!;
+  const box = (await neptune.boundingBox())!;
   expect(Math.abs(box.x + box.width / 2 - vp.width / 2)).toBeLessThan(80);
   expect(Math.abs(box.y + 1.5 * box.height - vp.height / 2)).toBeLessThan(100);
 });
