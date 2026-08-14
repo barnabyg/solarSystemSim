@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import type { SoundscapeState } from "../../src/audio/soundscape";
+import { clickAway, focusViaCanvas } from "./overlap-helpers";
 
 // Ticket #12 soundscape: a subtle procedural ambient pad plus soft UI
 // feedback blips, synthesized at runtime with the Web Audio API (zero audio
@@ -26,26 +27,6 @@ function readAudio(page: Page): Promise<SoundscapeState> {
 async function boot(page: Page): Promise<void> {
   await page.goto("/");
   await expect(page.locator("#boot-status")).toHaveText("booted");
-}
-
-/**
- * Inspect Earth through the canvas, retrying while the sim runs: the Moon's
- * orbit is clamped to ~2× Earth's display radius (ticket #20), so its label
- * can cover Earth's label at the overview zoom and its small disc can pass
- * over Earth's anchor point — a transit lasts moments, and each retry (one
- * sim day apart) finds the obstruction moved on.
- */
-async function inspectEarth(page: Page): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const label = page.locator('[data-body="Earth"]');
-    await expect(label).toBeVisible();
-    const box = (await label.boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + 1.5 * box.height);
-    const state = await page.locator("#camera-state").textContent();
-    if (state === "focus:Earth") return;
-    await page.waitForTimeout(800);
-  }
-  throw new Error("could not focus Earth through the canvas after retries");
 }
 
 // ---- Zero audio assets ---------------------------------------------------
@@ -113,8 +94,9 @@ test("shows a mute toggle; ambient audio is active and the toggle silences it", 
 test("UI feedback blips play on key interactions", async ({ page }) => {
   await boot(page);
 
-  // Inspecting a body opens the fact card and plays a soft chime.
-  await inspectEarth(page);
+  // Inspecting a body (through the canvas — the overlap-proof path, see
+  // overlap-helpers.ts) opens the fact card and plays a soft chime.
+  await focusViaCanvas(page, "Earth");
   await expect.poll(async () => (await readAudio(page)).blips.inspect).toBeGreaterThanOrEqual(1);
 
   // Closing the card plays a lower, softer note.
@@ -135,10 +117,12 @@ test("mute silences all audio; unmute restores it", async ({ page }) => {
 
   // Baseline interactions first, so the silence check compares real counts:
   // inspecting Earth plays a chime, clicking away releases focus (back to the
-  // free-flight overview) and plays the release note.
-  await inspectEarth(page);
+  // free-flight overview) and plays the release note. Both go through the
+  // overlap-proof helpers (a raw label click can be intercepted by a covering
+  // label at the overview zoom).
+  await focusViaCanvas(page, "Earth");
   await expect.poll(async () => (await readAudio(page)).blips.inspect).toBeGreaterThanOrEqual(1);
-  await page.mouse.click(30, 30);
+  await clickAway(page);
   await expect.poll(async () => (await readAudio(page)).blips.release).toBeGreaterThanOrEqual(1);
   const before = await readAudio(page);
 
@@ -147,12 +131,12 @@ test("mute silences all audio; unmute restores it", async ({ page }) => {
 
   // Every interaction while muted must not schedule anything: the played
   // counts stay frozen. One attempt per blip kind — toggle (Space), warp
-  // (preset), release (Escape), inspect (clicking the Sun's label, which the
-  // free-flight overview keeps clear of the card).
+  // (preset), release (Escape), inspect (focusing the Sun through the canvas,
+  // which the free-flight overview keeps clear of the card).
   await page.keyboard.press("Space");
   await page.locator('[data-warp-preset="1"]').click();
   await page.keyboard.press("Escape");
-  await page.locator('[data-body="Sun"]').click();
+  await focusViaCanvas(page, "Sun");
   await expect
     .poll(async () => (await readAudio(page)).blips, { timeout: 3000 })
     .toEqual(before.blips);

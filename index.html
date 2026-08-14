@@ -39,6 +39,22 @@
           0 1px 3px rgba(0, 0, 0, 0.9),
           0 0 8px rgba(0, 0, 0, 0.6);
       }
+      /* Ticket #21 label hierarchy: planets lead the eye, moons recede, so
+         overlapping labels stay readable at the overview zoom. The Sun is
+         the largest (the system's anchor), dwarf planets sit between planets
+         and moons; each kind keeps one size across the whole roster. */
+      .body-label--sun {
+        font-size: 15px;
+      }
+      .body-label--planet {
+        font-size: 14px;
+      }
+      .body-label--dwarf {
+        font-size: 12px;
+      }
+      .body-label--moon {
+        font-size: 10px;
+      }
       #hint {
         position: absolute;
         left: 50%;
