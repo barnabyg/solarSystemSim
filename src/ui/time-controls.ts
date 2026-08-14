@@ -33,12 +33,17 @@ function warpToSlider(rate: number): number {
   return Math.round(t * SLIDER_STEPS);
 }
 
-/** Shortcuts never steal keys from form controls or buttons. */
-function isInteractive(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
+/**
+ * Whether the event target is a place where the user types: shortcuts must
+ * never steal keys (Space, arrows, +/-, all of which type) from it.
+ */
+function isTypingTarget(target: HTMLElement | null): boolean {
+  if (!target) return false;
   if (target.isContentEditable) return true;
   const tag = target.tagName;
-  return tag === "BUTTON" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") return (target as HTMLInputElement).type !== "range";
+  return false;
 }
 
 export function initTimeControls(clock: SimClock): void {
@@ -81,19 +86,22 @@ export function initTimeControls(clock: SimClock): void {
 
   window.addEventListener("keydown", (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (isInteractive(event.target)) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (isTypingTarget(target)) return;
     switch (event.key) {
       case " ":
+        // preventDefault also suppresses the click a focused button would
+        // otherwise fire, so Space always toggles pause, whatever has focus.
         event.preventDefault();
         setPaused(!clock.paused);
         break;
       case "ArrowLeft":
-        event.preventDefault();
-        clock.step(-1);
-        break;
       case "ArrowRight":
+        // The warp slider owns its arrow keys (nudge the rate); everywhere
+        // else arrows step the sim date.
+        if (target?.tagName === "INPUT") return;
         event.preventDefault();
-        clock.step(1);
+        clock.step(event.key === "ArrowLeft" ? -1 : 1);
         break;
       case "+":
       case "=":

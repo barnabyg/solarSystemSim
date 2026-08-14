@@ -44,8 +44,16 @@ test("shows the control bar, presets, and corner readout", async ({ page }) => {
   await page.screenshot({ path: "test-results/time-controls.png" });
 });
 
-test("presets change the sim speed and the readout reflects it", async ({ page }) => {
+test("presets change the time warp and the readout reflects it", async ({ page }) => {
   await boot(page);
+
+  // At real time the calendar readout does not advance within the test
+  // window — the baseline the day/s check below is measured against.
+  await page.locator('[data-warp-preset="1"]').click();
+  await expect(page.locator("#warp-label")).toHaveText("1×");
+  const realStart = await readDate(page);
+  await page.waitForTimeout(1500);
+  expect(await readDate(page)).toBe(realStart);
 
   // Acceptance criterion: warp to day/s and verify the readout advances.
   await page.locator('[data-warp-preset="86400"]').click();
@@ -84,7 +92,7 @@ test("pause freezes the readout; resume continues it", async ({ page }) => {
   expect(await readDate(page)).not.toBe(resumed);
 });
 
-test("the warp slider adjusts the sim speed continuously", async ({ page }) => {
+test("the warp slider adjusts the time warp continuously", async ({ page }) => {
   await boot(page);
 
   const slider = page.locator("#warp-slider");
@@ -117,8 +125,27 @@ test("Space toggles pause", async ({ page }) => {
   await expect(page.locator("#pause-btn")).toHaveText("Pause");
 });
 
+test("Space still pauses after clicking a control", async ({ page }) => {
+  await boot(page);
+
+  // Focus lands on the preset button; Space must pause the sim rather than
+  // re-fire the button's click.
+  await page.locator('[data-warp-preset="86400"]').click();
+  await expect(page.locator("#warp-label")).toHaveText("1 d/s");
+  await page.keyboard.press("Space");
+  await expect(page.locator("#pause-btn")).toHaveText("Resume");
+  const frozen = await readDate(page);
+  await page.waitForTimeout(1500);
+  expect(await readDate(page)).toBe(frozen);
+});
+
 test("arrow keys step the sim date a day at a time", async ({ page }) => {
   await boot(page);
+
+  // Click a control first: focus sits on the button, and arrows must still
+  // step the date.
+  await page.locator('[data-warp-preset="86400"]').click();
+  await expect(page.locator("#warp-label")).toHaveText("1 d/s");
 
   // Pause first so continuous ticking cannot blur the exact stepped date.
   await page.keyboard.press("Space");
