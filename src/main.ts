@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { initSoundscape, type SoundscapeState } from "./audio/soundscape";
 import { CameraRig, type CameraState } from "./camera/camera";
+import type { MoonName } from "./orbit/elements";
 import type { Vec3 } from "./orbit/kepler";
 import { SolarSystemScene } from "./scene/scene";
 import { createPostprocessing } from "./scene/postprocessing";
@@ -173,6 +174,8 @@ const e2eScene = window as unknown as {
   __beltParticlePosition?: () => [number, number, number];
   __bodyPosition?: (name: string) => Vec3 | null;
   __bodyScale?: (name: string) => number | null;
+  __moonOrbitRadius?: (name: string) => number | null;
+  __moonOrbitBound?: (name: string) => number | null;
 };
 const e2eAudio = window as unknown as { __soundscape?: SoundscapeState };
 const audioStatusEl = document.getElementById("audio-status");
@@ -215,6 +218,13 @@ e2eScene.__bodyPosition = (name) => solarSystem.bodyWorldPosition(name);
 // surface the toggle test uses to assert bodies stay readable at real
 // distances (they shrink from compressed size, but never below the floor).
 e2eScene.__bodyScale = (name) => solarSystem.bodyScale(name);
+// The moon-orbit seams (ticket #20) mirror a moon's rendered orbit radius
+// (apocenter, clamped to the primary's neighborhood in compressed mode) and
+// the neighborhood bound itself, so the moon-orbit spec can assert the
+// "orbit never leaves the primary's neighborhood" acceptance criteria
+// without reading pixel data.
+e2eScene.__moonOrbitRadius = (name) => solarSystem.moonOrbitRadius(name as MoonName);
+e2eScene.__moonOrbitBound = (name) => solarSystem.moonOrbitBound(name as MoonName);
 
 const frameTimer = new THREE.Clock();
 renderer.setAnimationLoop(() => {

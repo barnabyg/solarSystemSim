@@ -24,13 +24,13 @@ async function clickBody(page: Page, name: string): Promise<void> {
 /**
  * Inspect a body through the canvas, retrying while the sim runs: at the
  * overview zoom the Moon's small disc can pass exactly over Earth's click
- * point (it orbits ~6 display radii out, so a transit lasts moments), and a
- * passing moon's label can cover the anchor point too. Between attempts the
- * sim advances ~1 day per second, so the obstruction moves on and the next
- * attempt hits the intended body. The budget is generous: under the suite's
- * parallel load the software-GL host drops to ~20 fps, stretching each
- * attempt's wall-clock cost, and a transit obstruction can linger for
- * several sim days of retries.
+ * point (its orbit is clamped to ~2× Earth's display radius, so a transit
+ * lasts moments), and a passing moon's label can cover the anchor point too.
+ * Between attempts the sim advances ~1 day per second, so the obstruction
+ * moves on and the next attempt hits the intended body. The budget is
+ * generous: under the suite's parallel load the software-GL host drops to
+ * ~20 fps, stretching each attempt's wall-clock cost, and a transit
+ * obstruction can linger for several sim days of retries.
  */
 async function inspect(page: Page, name: string): Promise<void> {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -79,7 +79,7 @@ test("Escape closes the card", async ({ page }) => {
 
 test("the close button closes the card", async ({ page }) => {
   await boot(page);
-  await page.locator('[data-body="Earth"]').click();
+  await inspect(page, "Earth");
   await expect(page.locator("#fact-card")).toBeVisible();
 
   await page.locator("#fact-card-close").click();
@@ -88,7 +88,7 @@ test("the close button closes the card", async ({ page }) => {
 
 test("clicking away closes the card and releases focus", async ({ page }) => {
   await boot(page);
-  await page.locator('[data-body="Earth"]').click();
+  await inspect(page, "Earth");
   await expect(page.locator("#fact-card")).toBeVisible();
 
   // Deep space: far from any body. The click releases the camera focus and

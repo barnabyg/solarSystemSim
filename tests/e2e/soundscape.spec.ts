@@ -28,6 +28,26 @@ async function boot(page: Page): Promise<void> {
   await expect(page.locator("#boot-status")).toHaveText("booted");
 }
 
+/**
+ * Inspect Earth through the canvas, retrying while the sim runs: the Moon's
+ * orbit is clamped to ~2× Earth's display radius (ticket #20), so its label
+ * can cover Earth's label at the overview zoom and its small disc can pass
+ * over Earth's anchor point — a transit lasts moments, and each retry (one
+ * sim day apart) finds the obstruction moved on.
+ */
+async function inspectEarth(page: Page): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const label = page.locator('[data-body="Earth"]');
+    await expect(label).toBeVisible();
+    const box = (await label.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + 1.5 * box.height);
+    const state = await page.locator("#camera-state").textContent();
+    if (state === "focus:Earth") return;
+    await page.waitForTimeout(800);
+  }
+  throw new Error("could not focus Earth through the canvas after retries");
+}
+
 // ---- Zero audio assets ---------------------------------------------------
 // Acceptance criterion "zero audio asset files in the build": the soundscape
 // is synthesized entirely at runtime, so neither the source tree nor public/
@@ -93,9 +113,8 @@ test("shows a mute toggle; ambient audio is active and the toggle silences it", 
 test("UI feedback blips play on key interactions", async ({ page }) => {
   await boot(page);
 
-  // Inspecting a body (clicking its label) opens the fact card and plays a
-  // soft chime.
-  await page.locator('[data-body="Earth"]').click();
+  // Inspecting a body opens the fact card and plays a soft chime.
+  await inspectEarth(page);
   await expect.poll(async () => (await readAudio(page)).blips.inspect).toBeGreaterThanOrEqual(1);
 
   // Closing the card plays a lower, softer note.
@@ -117,7 +136,7 @@ test("mute silences all audio; unmute restores it", async ({ page }) => {
   // Baseline interactions first, so the silence check compares real counts:
   // inspecting Earth plays a chime, clicking away releases focus (back to the
   // free-flight overview) and plays the release note.
-  await page.locator('[data-body="Earth"]').click();
+  await inspectEarth(page);
   await expect.poll(async () => (await readAudio(page)).blips.inspect).toBeGreaterThanOrEqual(1);
   await page.mouse.click(30, 30);
   await expect.poll(async () => (await readAudio(page)).blips.release).toBeGreaterThanOrEqual(1);
