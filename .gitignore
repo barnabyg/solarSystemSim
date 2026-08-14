@@ -83,3 +83,6 @@ test-results/
 playwright-report/
 blob-report/
 
+
+# --- Parallel-thread worktrees (AGENTS.md) ---
+.worktrees/
