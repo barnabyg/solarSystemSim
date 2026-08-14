@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { clickAway, focusViaCanvas } from "./overlap-helpers";
 
 // Ticket #9 fact cards: inspecting a body (clicking it in the scene, or its
 // label) opens the card on the right showing the six fact fields, the "vs
@@ -12,34 +13,16 @@ async function boot(page: Page): Promise<void> {
   await expect(page.locator("#boot-status")).toHaveText("booted");
 }
 
-/** Click the body through the canvas at its projected position (the label
- *  floats above the anchor point where the body actually is). */
-async function clickBody(page: Page, name: string): Promise<void> {
-  const label = page.locator(`[data-body="${name}"]`);
-  await expect(label).toBeVisible();
-  const box = (await label.boundingBox())!;
-  await page.mouse.click(box.x + box.width / 2, box.y + 1.5 * box.height);
-}
-
 /**
- * Inspect a body through the canvas, retrying while the sim runs: at the
- * overview zoom the Moon's small disc can pass exactly over Earth's click
- * point (its orbit is clamped to ~2× Earth's display radius, so a transit
- * lasts moments), and a passing moon's label can cover the anchor point too.
- * Between attempts the sim advances ~1 day per second, so the obstruction
- * moves on and the next attempt hits the intended body. The budget is
- * generous: under the suite's parallel load the software-GL host drops to
- * ~20 fps, stretching each attempt's wall-clock cost, and a transit
- * obstruction can linger for several sim days of retries.
+ * Inspect a body through the canvas — the overlap-proof path (see
+ * overlap-helpers.ts): a raw label click can be intercepted by a covering
+ * label at the overview zoom, which is date-dependent and flaky. The shared
+ * helper retries while the sim runs, so a passing moon (its orbit clamped to
+ * ~2× Earth's display radius, ticket #20) or its label moving over the click
+ * point resolves itself between attempts.
  */
 async function inspect(page: Page, name: string): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await clickBody(page, name);
-    const state = await page.locator("#camera-state").textContent();
-    if (state === `focus:${name}`) return;
-    await page.waitForTimeout(800);
-  }
-  throw new Error(`could not focus ${name} through the canvas after retries`);
+  await focusViaCanvas(page, name);
 }
 
 test("clicking Earth opens its fact card with all six fields", async ({ page }) => {
@@ -79,6 +62,9 @@ test("Escape closes the card", async ({ page }) => {
 
 test("the close button closes the card", async ({ page }) => {
   await boot(page);
+  // Inspect through the canvas (overlap-proof): a raw label click can be
+  // intercepted by a covering label at the overview zoom, which is date-
+  // dependent and flaky.
   await inspect(page, "Earth");
   await expect(page.locator("#fact-card")).toBeVisible();
 
@@ -91,9 +77,9 @@ test("clicking away closes the card and releases focus", async ({ page }) => {
   await inspect(page, "Earth");
   await expect(page.locator("#fact-card")).toBeVisible();
 
-  // Deep space: far from any body. The click releases the camera focus and
-  // the card closes with it.
-  await page.mouse.click(30, 30);
+  // Click away on provably empty canvas: the click releases the camera focus
+  // and the card closes with it.
+  await clickAway(page);
   await expect(page.locator("#fact-card")).toBeHidden();
   await expect(page.locator("#camera-state")).toHaveText("free");
 });
@@ -111,7 +97,9 @@ test("inspecting another body switches the card", async ({ page }) => {
 
 test("the Sun opens a fact card too", async ({ page }) => {
   await boot(page);
-  await page.locator('[data-body="Sun"]').click();
+  // Same overlap-proof inspection as the planets (labels overlap at the
+  // overview zoom; the canvas path targets the body's anchor point).
+  await inspect(page, "Sun");
   await expect(page.locator("#fact-card-name")).toHaveText("Sun");
   await expect(page.locator('#fact-card [data-fact="diameter"]')).toHaveText("1,392,680 km");
   await expect(page.locator("#fact-vs-label")).toHaveText("109× Earth");

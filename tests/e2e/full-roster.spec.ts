@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { CameraState } from "../../src/camera/camera";
+import { clickAway } from "./overlap-helpers";
 
 // Ticket #8: the full roster — thirteen moons orbiting their planets, five
 // dwarf planets orbiting the Sun, and the stylized asteroid belt between Mars
@@ -223,7 +224,8 @@ test("moons and dwarf planets are focusable through their labels", async ({ page
     expect(state.focused).toBe(target);
   }
 
-  // Releasing returns to free flight.
-  await page.mouse.click(30, 30);
+  // Releasing returns to free flight (click away on provably empty canvas —
+  // the same overlap-proof release as the fact-card spec).
+  await clickAway(page);
   await expect(page.locator("#camera-state")).toHaveText("free");
 });

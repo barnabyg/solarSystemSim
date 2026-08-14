@@ -122,6 +122,13 @@ const MOON_PRIMARY_NEIGHBORHOODS: Record<PlanetName | DwarfName, MoonOrbitNeighb
 })();
 
 /**
+ * A body's label kind for the ticket #21 size hierarchy: the Sun leads,
+ * planets next, dwarf planets in between, moons recede — so overlapping
+ * labels stay readable at the overview zoom.
+ */
+type LabelKind = "sun" | "planet" | "moon" | "dwarf";
+
+/**
  * A moon's rendered state: its mesh (a child of `group`), the group that
  * rides along at the primary's world position, and the primary it orbits.
  * The planetocentric orbit line lives in the same group.
@@ -192,24 +199,24 @@ export class SolarSystemScene {
       const mesh = this.buildPlanet(name);
       this.planetMeshes.set(name, mesh);
       this.scene.add(mesh);
-      this.labels.set(name, this.createLabel(name));
+      this.labels.set(name, this.createLabel(name, "planet"));
     }
 
     for (const name of Object.keys(DWARF_ELEMENTS) as DwarfName[]) {
       const mesh = this.buildDwarf(name);
       this.dwarfMeshes.set(name, mesh);
       this.scene.add(mesh);
-      this.labels.set(name, this.createLabel(name));
+      this.labels.set(name, this.createLabel(name, "dwarf"));
     }
 
     for (const name of Object.keys(MOON_ELEMENTS) as MoonName[]) {
       const moon = this.buildMoon(name);
       this.moons.set(name, moon);
       this.scene.add(moon.group);
-      this.labels.set(name, this.createLabel(name));
+      this.labels.set(name, this.createLabel(name, "moon"));
     }
 
-    this.labels.set(SUN_NAME, this.createLabel(SUN_NAME));
+    this.labels.set(SUN_NAME, this.createLabel(SUN_NAME, "sun"));
     this.pickables.push(
       this.sunMesh,
       ...this.planetMeshes.values(),
@@ -625,10 +632,14 @@ export class SolarSystemScene {
     return new THREE.LineBasicMaterial({ color: 0x4a5a8a, transparent: true, opacity: 0.4 });
   }
 
-  private createLabel(name: string): HTMLDivElement {
+  private createLabel(name: string, kind: LabelKind): HTMLDivElement {
     const el = document.createElement("div");
-    el.className = "body-label";
+    // Ticket #21: the kind class and data-kind drive the label-size hierarchy
+    // (Sun > planets > dwarf planets > moons) in index.html's stylesheet —
+    // the e2e suite asserts the computed sizes through data-kind.
+    el.className = `body-label body-label--${kind}`;
     el.dataset.body = name;
+    el.dataset.kind = kind;
     el.textContent = name;
     this.labelLayer.appendChild(el);
     return el;
