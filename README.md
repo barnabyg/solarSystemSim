@@ -2,7 +2,7 @@
 
 An exploration-first, entertainment-driven solar system simulator for the web — stylized realism, real orbital data, built with Vite + TypeScript + Three.js.
 
-> **Status:** walking skeleton, camera, and time controls (tickets #4–#6) — the Sun and eight planets orbit at their real positions for today's date, with orbit lines, labels, and a starfield; the camera supports free flight (drag to look around, right-drag to pan, scroll to zoom) and focus (click a body to orbit and follow it, click empty space to release), opening Sun-centered with a one-line hint; the bottom-center time controls (pause, warp slider, presets) plus keyboard shortcuts and a corner sim-date readout drive the clock. Full content — moons, dwarf planets, and the asteroid belt (ticket #8) — is next.
+> **Status:** walking skeleton, camera, time controls, full roster, and fact cards (tickets #4–#9) — the Sun, eight planets, thirteen moons, five dwarf planets, and the asteroid belt orbit at their real positions for today's date, with orbit lines, labels, and a starfield; the camera supports free flight (drag to look around, right-drag to pan, scroll to zoom) and focus (click a body to orbit and follow it, click empty space to release), opening Sun-centered with a one-line hint; the bottom-center time controls (pause, warp slider, presets) plus keyboard shortcuts and a corner sim-date readout drive the clock; clicking any body opens its fact card with the six fact fields, a vs-Earth size bar, and one fun fact. The true-scale toggle (ticket #10) is next.
 
 ## Quickstart
 
