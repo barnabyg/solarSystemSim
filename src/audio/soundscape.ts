@@ -25,9 +25,10 @@ export interface SoundscapeState {
   ambient: boolean;
   /**
    * Blips scheduled to the audio graph, per kind. Mute-suppressed blips are
-   * never scheduled, so the count is exact with respect to mute; a blip
-   * scheduled while the context is suspended (browser autoplay policy) plays
-   * as soon as the browser allows, so the count is not inflated by mute.
+   * never scheduled, so counts are exact with respect to mute (a muted
+   * interaction leaves the count unchanged). A blip scheduled while the
+   * context is still suspended under the browser's autoplay policy still
+   * counts — it plays as soon as the browser allows.
    */
   blips: Record<BlipKind, number>;
 }
