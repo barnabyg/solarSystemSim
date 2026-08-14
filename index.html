@@ -73,8 +73,8 @@
         z-index: 10;
       }
       /* Bottom-center controls (ticket #6 time controls + ticket #10 scale
-         toggle): the wrapper centers the bar; the time controls keep their
-         panel styling inside it. */
+         toggle + ticket #12 mute toggle): the wrapper centers the bar; the
+         time controls keep their panel styling inside it. */
       #bottom-bar {
         position: absolute;
         left: 50%;
@@ -149,6 +149,20 @@
         font: 500 12px/1 system-ui, sans-serif;
         letter-spacing: 0.04em;
         white-space: nowrap;
+      }
+      /* Soundscape mute toggle (ticket #12): a compact speaker glyph; its
+         aria-pressed state mirrors the soundscape's muted flag. */
+      #mute-btn {
+        min-width: 38px;
+        font-size: 14px;
+        line-height: 1;
+        padding: 7px 9px;
+      }
+      /* The pressed (muted) state must beat the generic pressed-button rule
+         in the panel, hence the repeated id. */
+      #time-controls #mute-btn[aria-pressed="true"] {
+        background: rgba(255, 130, 130, 0.18);
+        border-color: rgba(255, 130, 130, 0.5);
       }
       /* Right-side fact card (ticket #9): opens on inspect, closes on
          click-away or Escape. */
@@ -293,6 +307,7 @@
         <button type="button" class="preset-btn" data-warp-preset="2629746">1 mo/s</button>
         <input id="warp-slider" type="range" min="0" max="1000" step="1" aria-label="Time warp" />
         <span id="warp-label">1 d/s</span>
+        <button id="mute-btn" type="button" aria-pressed="false" aria-label="Mute sound">🔊</button>
       </div>
       <!-- Ticket #10 scale toggle: flips between compressed and true-scale
            mode; the button label and aria-pressed mirror the current mode. -->
@@ -303,6 +318,10 @@
     <!-- Ticket #10 seam: the scale-toggle e2e test asserts the active scale
          mode from this element (compressed | true). -->
     <div id="scale-mode" hidden></div>
+    <!-- Ticket #12 audio seam: the soundscape e2e spec asserts the context
+         state and mute flag from this element (mirrored each frame in
+         main.ts alongside window.__soundscape). -->
+    <div id="audio-status" hidden></div>
     <!-- Ticket #8 roster seam: the full-roster smoke test asserts the scene's
          actual body count and belt particle count from this element. -->
     <div id="roster-status" hidden></div>

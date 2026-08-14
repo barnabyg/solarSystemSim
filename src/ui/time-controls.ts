@@ -5,10 +5,15 @@
  * +/- double/halve the warp) and the tab-blur pause. Thin DOM wiring: every
  * state change flows through applyWarp/setPaused, which write to the clock
  * and mirror the change to the controls together, so the UI never drifts
- * from the sim state. Tested at the UI-interaction seam (ADR-0004) by the
+ * from the sim state. Ticket #12: the explicit interactions (pause button,
+ * Space, presets, +/-) play a soft UI blip through the soundscape; the
+ * slider and the tab-blur pause stay silent so feedback only marks
+ * deliberate actions. Tested at the UI-interaction seam (ADR-0004) by the
  * e2e suite, not unit-tested.
  */
 
+import type { Soundscape } from "../audio/soundscape";
+import { getElement } from "./dom";
 import {
   adjustWarp,
   clampWarp,
@@ -46,7 +51,7 @@ function isTypingTarget(target: HTMLElement | null): boolean {
   return false;
 }
 
-export function initTimeControls(clock: SimClock): void {
+export function initTimeControls(clock: SimClock, sounds: Soundscape): void {
   const pauseBtn = getElement<HTMLButtonElement>("pause-btn");
   const slider = getElement<HTMLInputElement>("warp-slider");
   const label = getElement<HTMLSpanElement>("warp-label");
@@ -76,10 +81,16 @@ export function initTimeControls(clock: SimClock): void {
     syncPauseButton();
   }
 
-  pauseBtn.addEventListener("click", () => setPaused(!clock.paused));
+  pauseBtn.addEventListener("click", () => {
+    setPaused(!clock.paused);
+    sounds.blip("toggle");
+  });
 
   for (const btn of presetBtns) {
-    btn.addEventListener("click", () => applyWarp(Number(btn.dataset.warpPreset)));
+    btn.addEventListener("click", () => {
+      applyWarp(Number(btn.dataset.warpPreset));
+      sounds.blip("warp");
+    });
   }
 
   slider.addEventListener("input", () => applyWarp(sliderToWarp(Number(slider.value))));
@@ -94,6 +105,7 @@ export function initTimeControls(clock: SimClock): void {
         // otherwise fire, so Space always toggles pause, whatever has focus.
         event.preventDefault();
         setPaused(!clock.paused);
+        sounds.blip("toggle");
         break;
       case "ArrowLeft":
       case "ArrowRight":
@@ -107,11 +119,13 @@ export function initTimeControls(clock: SimClock): void {
       case "=":
         event.preventDefault();
         applyWarp(adjustWarp(clock.warp, 1));
+        sounds.blip("warp");
         break;
       case "-":
       case "_":
         event.preventDefault();
         applyWarp(adjustWarp(clock.warp, -1));
+        sounds.blip("warp");
         break;
     }
   });
@@ -127,10 +141,4 @@ export function initTimeControls(clock: SimClock): void {
 
   syncPauseButton();
   syncWarpControls();
-}
-
-function getElement<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`missing #${id} element`);
-  return el as T;
 }
