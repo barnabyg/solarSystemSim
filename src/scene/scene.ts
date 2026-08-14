@@ -28,17 +28,21 @@ import {
   DWARF_ELEMENTS,
   MOON_ELEMENTS,
   PLANET_ELEMENTS,
+  PLANET_NAMES,
   type DwarfName,
   type MoonName,
   type PlanetName
 } from "../orbit/elements";
 import { orbitalPeriodDays, positionAt, type OrbitalElements, type Vec3 } from "../orbit/kepler";
 import {
+  compressedMoonOrbitRadius,
   eclipticToWorld,
+  moonOrbitMaxRadius,
   scaleDistanceRatio,
   scaleMoonPosition,
   scalePosition,
   scaleRadius,
+  type MoonOrbitNeighborhood,
   type ScaleMode
 } from "../scale/scale";
 import type { SimClock } from "../time/clock";
@@ -80,6 +84,42 @@ const ALL_VISUALS: Record<string, BodyVisual> = {
   ...MOON_VISUALS,
   ...DWARF_VISUALS
 };
+
+/**
+ * Orbital neighborhoods of the moon primaries (ticket #20): the extreme
+ * heliocentric distances of each primary and of the adjacent planets' orbits,
+ * fed to `moonOrbitMaxRadius`. Neighbors are the adjacent planets in
+ * Sun-outward order — the orbit lines a moon's orbit must never cross (issue
+ * #20). Dwarf-planet orbits are deliberately not neighbors: counting Ceres
+ * (between Mars and Jupiter) would crush Jupiter's moon system into a sliver
+ * under the clamp, and Pluto's orbit already crosses Neptune's (its perihelion
+ * dips inside), leaving no finite gap either way — so Charon's tiny orbit is
+ * unclamped.
+ */
+const MOON_PRIMARY_NEIGHBORHOODS: Record<PlanetName | DwarfName, MoonOrbitNeighborhood> = (() => {
+  const neighborhoods = {} as Record<PlanetName | DwarfName, MoonOrbitNeighborhood>;
+  for (let i = 0; i < PLANET_NAMES.length; i++) {
+    const name = PLANET_NAMES[i];
+    const e = PLANET_ELEMENTS[name];
+    const inner = i > 0 ? PLANET_ELEMENTS[PLANET_NAMES[i - 1]] : null;
+    const outer = i < PLANET_NAMES.length - 1 ? PLANET_ELEMENTS[PLANET_NAMES[i + 1]] : null;
+    neighborhoods[name] = {
+      perihelionAu: e.a0 * (1 - e.e0),
+      aphelionAu: e.a0 * (1 + e.e0),
+      innerNeighborAphelionAu: inner ? inner.a0 * (1 + inner.e0) : null,
+      outerNeighborPerihelionAu: outer ? outer.a0 * (1 - outer.e0) : null
+    };
+  }
+  const pluto = DWARF_ELEMENTS.Pluto;
+  const neptune = PLANET_ELEMENTS.Neptune;
+  neighborhoods.Pluto = {
+    perihelionAu: pluto.a0 * (1 - pluto.e0),
+    aphelionAu: pluto.a0 * (1 + pluto.e0),
+    innerNeighborAphelionAu: neptune.a0 * (1 + neptune.e0),
+    outerNeighborPerihelionAu: null
+  };
+  return neighborhoods;
+})();
 
 /**
  * A moon's rendered state: its mesh (a child of `group`), the group that
@@ -348,6 +388,49 @@ export class SolarSystemScene {
   }
 
   /**
+   * Rendered orbit radius of a moon's far point (apocenter) in the active
+   * scale mode — the ticket #20 e2e seam. Mirrors the orbit the scene draws:
+   * clamped to the primary's neighborhood in compressed mode, untouched in
+   * true-scale mode. Returns null for unknown names.
+   */
+  moonOrbitRadius(name: MoonName): number | null {
+    const orbit = MOON_ELEMENTS[name];
+    if (!orbit) return null;
+    const primary = PRIMARY_VISUALS[orbit.primary];
+    const displayRadius = scaleRadius(primary.radiusKm, this.scaleMode);
+    return compressedMoonOrbitRadius(
+      primary.radiusKm,
+      displayRadius,
+      orbit.elements.a0 * (1 + orbit.elements.e0),
+      this.moonOrbitMaxDisplayRadius(orbit.primary)
+    );
+  }
+
+  /**
+   * The neighborhood bound applied to a moon's orbit in the active scale mode —
+   * the ticket #20 e2e seam. Null when no bound applies (true-scale mode, or a
+   * primary with no finite gap to its neighbors).
+   */
+  moonOrbitBound(name: MoonName): number | null {
+    const orbit = MOON_ELEMENTS[name];
+    if (!orbit) return null;
+    if (this.scaleMode !== "compressed") return null;
+    return moonOrbitMaxRadius(MOON_PRIMARY_NEIGHBORHOODS[orbit.primary], "compressed");
+  }
+
+  /**
+   * Neighborhood clamp for a moon orbit in the active mode (ticket #20):
+   * `moonOrbitMaxRadius`'s bound in compressed mode, undefined in true-scale
+   * mode (which must stay exactly as it was) and when the primary has no
+   * finite gap. Passed to the moon orbit functions, so the drawn orbit — mesh
+   * and line alike — never leaves the primary's neighborhood.
+   */
+  private moonOrbitMaxDisplayRadius(primary: PlanetName | DwarfName): number | undefined {
+    if (this.scaleMode !== "compressed") return undefined;
+    return moonOrbitMaxRadius(MOON_PRIMARY_NEIGHBORHOODS[primary], "compressed") ?? undefined;
+  }
+
+  /**
    * The Sun's disc: an unlit sphere bright enough (HDR values, tone mapping
    * disabled) to exceed the bloom threshold, so the core reads white-hot and
    * the glow/corona sprites (added by the constructor) bleed around it. It
@@ -495,7 +578,12 @@ export class SolarSystemScene {
     const orbit = MOON_ELEMENTS[name];
     const primary = PRIMARY_VISUALS[orbit.primary];
     const displayRadius = scaleRadius(primary.radiusKm, this.scaleMode);
-    const offset = scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days));
+    const offset = scaleMoonPosition(
+      primary.radiusKm,
+      displayRadius,
+      positionAt(orbit.elements, days),
+      this.moonOrbitMaxDisplayRadius(orbit.primary)
+    );
     return eclipticToWorld(offset);
   }
 
@@ -518,12 +606,13 @@ export class SolarSystemScene {
     const orbit = MOON_ELEMENTS[name];
     const primary = PRIMARY_VISUALS[orbit.primary];
     const displayRadius = scaleRadius(primary.radiusKm, this.scaleMode);
+    const maxRadius = this.moonOrbitMaxDisplayRadius(orbit.primary);
     const period = (360 * 36525) / orbit.elements.Ldot;
     const points = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
     for (let i = 0; i <= ORBIT_SEGMENTS; i++) {
       const t = (i / ORBIT_SEGMENTS) * period;
       const p = eclipticToWorld(
-        scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days + t))
+        scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days + t), maxRadius)
       );
       points[i * 3] = p.x;
       points[i * 3 + 1] = p.y;

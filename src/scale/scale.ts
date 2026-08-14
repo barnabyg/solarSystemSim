@@ -23,6 +23,13 @@
  * passes the primary's display radius (per the active mode), so the moon
  * functions are mode-independent.
  *
+ * In compressed mode the moon mapping is also clamped to the primary's orbital
+ * neighborhood (ticket #20): `moonOrbitMaxRadius` bounds the orbit to a
+ * fraction of the gap between the primary's orbit and its neighbors' orbits,
+ * so no moon orbit spills across an adjacent planet's orbit line (the Moon's
+ * orbit used to extend past Venus's). The scene applies the clamp in
+ * compressed mode only; true-scale mode is untouched.
+ *
  * Pure functions, no rendering or I/O — the seam under test.
  */
 
@@ -93,6 +100,66 @@ export const MOON_ORBIT_MIN_RADII = 1.6;
  * planet-hugging, and moons of one primary keep their physical order.
  */
 export const MOON_ORBIT_COMPRESSION = 0.08;
+
+/**
+ * How much of the gap between a primary's orbit and its neighbors' orbits a
+ * moon orbit may occupy (ticket #20). Orbits are clamped to this fraction of
+ * the gap, so they stay "well inside" the primary's orbital neighborhood
+ * instead of spilling across an adjacent planet's orbit line — the reported
+ * bug had the Moon's orbit extending past Venus's. The 0.75 factor keeps a
+ * clear visual margin inside the gap while leaving the orbit large enough to
+ * follow; it never bites below the disc-clearance floor (for Earth,
+ * 0.75 × the Venus gap ≈ 0.31 display units vs 1.6 × the disc ≈ 0.26).
+ */
+export const MOON_ORBIT_MAX_GAP_FRACTION = 0.75;
+
+/**
+ * A primary's orbital neighborhood in AU (ticket #20): the extreme distances
+ * of the primary's own orbit and of the adjacent planets' orbits. The gaps
+ * between these extremes are the room a moon orbit may occupy without ever
+ * crossing a neighbor's orbit line — at the primary's perihelion the inner
+ * gap is primary-perihelion minus inner-neighbor-aphelion, and at aphelion
+ * the outer gap is outer-neighbor-perihelion minus primary-aphelion.
+ */
+export interface MoonOrbitNeighborhood {
+  /** The primary's perihelion distance [AU]. */
+  perihelionAu: number;
+  /** The primary's aphelion distance [AU]. */
+  aphelionAu: number;
+  /** The inner neighbor's aphelion distance [AU], or null when none exists. */
+  innerNeighborAphelionAu: number | null;
+  /** The outer neighbor's perihelion distance [AU], or null when none exists. */
+  outerNeighborPerihelionAu: number | null;
+}
+
+/**
+ * Largest display radius a moon orbit may have around a primary in the active
+ * mode: `MOON_ORBIT_MAX_GAP_FRACTION` of the smaller of the two gaps to the
+ * adjacent planets' orbit lines (measured at the extremes, so the bound holds
+ * at every sim date). Returns null when there is no finite gap — the primary
+ * has no neighbor on a side, or a neighbor's orbit crosses the primary's (so
+ * the "gap" is negative or zero and no orbit can be contained).
+ */
+export function moonOrbitMaxRadius(
+  neighborhood: MoonOrbitNeighborhood,
+  mode: ScaleMode,
+  compressed: CompressedScaleConfig = COMPRESSED_SCALE,
+  trueScale: TrueScaleConfig = TRUE_SCALE
+): number | null {
+  const innerGap =
+    neighborhood.innerNeighborAphelionAu === null
+      ? Infinity
+      : scaleDistance(neighborhood.perihelionAu, mode, compressed, trueScale) -
+        scaleDistance(neighborhood.innerNeighborAphelionAu, mode, compressed, trueScale);
+  const outerGap =
+    neighborhood.outerNeighborPerihelionAu === null
+      ? Infinity
+      : scaleDistance(neighborhood.outerNeighborPerihelionAu, mode, compressed, trueScale) -
+        scaleDistance(neighborhood.aphelionAu, mode, compressed, trueScale);
+  const gap = Math.min(innerGap, outerGap);
+  if (!Number.isFinite(gap) || gap <= 0) return null;
+  return gap * MOON_ORBIT_MAX_GAP_FRACTION;
+}
 
 /**
  * Compressed display distance for a semi-major axis `au` [AU].
@@ -189,30 +256,37 @@ export function scalePosition(
  * planetocentric distance `moonDistanceAu` [AU] is expressed in units of the
  * primary's physical radius, compressed so the rendered system stays compact,
  * and floored above the primary's disc so the moon never renders inside it.
+ * An optional `maxDisplayRadius` clamps the orbit to the primary's orbital
+ * neighborhood (ticket #20); pass `moonOrbitMaxRadius`'s result in compressed
+ * mode and omit it in true-scale mode, which is unaffected.
  */
 export function compressedMoonOrbitRadius(
   primaryRadiusKm: number,
   primaryDisplayRadius: number,
-  moonDistanceAu: number
+  moonDistanceAu: number,
+  maxDisplayRadius?: number
 ): number {
   const radii = (moonDistanceAu * AU_KM) / primaryRadiusKm;
   const displayRadii = MOON_ORBIT_MIN_RADII + Math.max(radii - 1, 0) * MOON_ORBIT_COMPRESSION;
-  return primaryDisplayRadius * displayRadii;
+  const radius = primaryDisplayRadius * displayRadii;
+  return maxDisplayRadius === undefined ? radius : Math.min(radius, maxDisplayRadius);
 }
 
 /**
  * Map a planetocentric position [AU] to the compressed display frame around
  * the primary (whose mesh sits at the origin of this frame): direction and
- * orbit shape survive, the radius becomes the compressed moon orbit distance.
+ * orbit shape survive, the radius becomes the compressed moon orbit distance
+ * (optionally clamped to the primary's orbital neighborhood, ticket #20).
  */
 export function scaleMoonPosition(
   primaryRadiusKm: number,
   primaryDisplayRadius: number,
-  p: Vec3
+  p: Vec3,
+  maxDisplayRadius?: number
 ): Vec3 {
   const r = Math.hypot(p.x, p.y, p.z);
   if (r === 0) return { x: 0, y: 0, z: 0 };
-  const s = compressedMoonOrbitRadius(primaryRadiusKm, primaryDisplayRadius, r) / r;
+  const s = compressedMoonOrbitRadius(primaryRadiusKm, primaryDisplayRadius, r, maxDisplayRadius) / r;
   return { x: p.x * s, y: p.y * s, z: p.z * s };
 }
 
