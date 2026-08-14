@@ -216,35 +216,39 @@ function createGlowTexture(): THREE.CanvasTexture {
  * The Sun's glow and corona: two additive billboard sprites, children of the
  * Sun's mesh, so they scale with the Sun's display radius in both scale
  * modes. The inner sprite is the hot core glow; the outer one the faint
- * corona. Both carry colors above the bloom threshold, so the bloom pass
- * (which runs before OutputPass tone-maps the composed frame) picks them up
- * and spreads the glow.
+ * corona. Both are small — the glow ends at ~0.75 and the corona at ~0.9 of
+ * the Sun's display radius, i.e. inside the disc's own edge — and dim enough
+ * to sit below the bloom threshold, so the visible halo never reaches the
+ * inner planets (ticket #19): Mercury can project barely a disc-width from
+ * the Sun (a near-transit), and it still sits clear of the glow. The sprites
+ * carry the star-glow; the bloom pass adds only a whisper around the hot
+ * disc.
  */
 export function createSunGlow(): THREE.Group {
   const glow = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: createGlowTexture(),
-      color: new THREE.Color(1.6, 1.3, 0.9),
+      color: new THREE.Color(1.2, 0.95, 0.65),
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       toneMapped: false,
       transparent: true
     })
   );
-  glow.scale.set(3, 3, 1);
+  glow.scale.set(1.5, 1.5, 1);
 
   const corona = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: createGlowTexture(),
-      color: new THREE.Color(1.1, 0.85, 0.5),
-      opacity: 0.55,
+      color: new THREE.Color(0.4, 0.3, 0.16),
+      opacity: 0.3,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       toneMapped: false,
       transparent: true
     })
   );
-  corona.scale.set(6, 6, 1);
+  corona.scale.set(1.8, 1.8, 1);
 
   const group = new THREE.Group();
   group.add(glow, corona);

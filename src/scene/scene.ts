@@ -448,7 +448,7 @@ export class SolarSystemScene {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 48, 32),
       new THREE.MeshBasicMaterial({
-        color: new THREE.Color(2.2, 1.9, 1.4),
+        color: new THREE.Color(1.9, 1.6, 1.15),
         toneMapped: false
       })
     );
