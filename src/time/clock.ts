@@ -67,16 +67,21 @@ export interface SimClockOptions {
   daysSinceJ2000?: number;
   /** Warp rate (sim-seconds per real-second). Defaults to one day/s. */
   warp?: number;
+  /** Start paused. The golden screenshot suite's determinism seam (ticket
+   *  #13): booting paused pins the scene to the start date exactly, with no
+   *  elapsed sim time. Defaults to running. */
+  paused?: boolean;
 }
 
 export class SimClock {
   private currentDays: number;
   private warpRate: number;
-  private isPaused = false;
+  private isPaused: boolean;
 
   constructor(options: SimClockOptions = {}) {
     this.currentDays = options.daysSinceJ2000 ?? 0;
     this.warpRate = options.warp ?? WARP_PRESETS.dayPerSecond;
+    this.isPaused = options.paused ?? false;
   }
 
   /** Current sim date, days past J2000.0. */

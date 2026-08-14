@@ -23,6 +23,7 @@ import {
   SUN_NAME,
   type BodyVisual
 } from "../body/catalog";
+import { createRng } from "../lib/random";
 import {
   DWARF_ELEMENTS,
   MOON_ELEMENTS,
@@ -45,6 +46,12 @@ import { createAtmosphereShell, createNebula, createRings, createStarfield, crea
 
 /** Sample points per orbit line; 256 keeps lines smooth and rebuilds cheap. */
 const ORBIT_SEGMENTS = 256;
+/**
+ * Seed for the belt's deterministic layout (ticket #13). The stylized belt is
+ * built from random particle orbits and tints; a fixed seed makes it render
+ * identically on every boot, which the golden screenshot suite needs.
+ */
+const BELT_RNG_SEED = 0xb31f;
 /**
  * Rebuild orbit lines when the sim date has drifted this many days. Element
  * rates are per century (~1e-4 deg/day of shape drift), so a month of sim
@@ -626,21 +633,26 @@ export class SolarSystemScene {
     // band honors the catalog's vertical half-thickness at every radius.
     const maxInclination = (a: number) =>
       (Math.atan2(halfThicknessAu, a * (1 + MAX_ECCENTRICITY)) * 180) / Math.PI;
+    // Deterministic layout (ticket #13): a fixed-seed PRNG instead of
+    // Math.random(), so the belt renders identically every boot — the golden
+    // screenshot suite needs a stable scene. The per-frame motion (syncBelt)
+    // is unaffected; only the construction is reproducible.
+    const rand = createRng(BELT_RNG_SEED);
     const particles: OrbitalElements[] = [];
     for (let i = 0; i < particleCount; i++) {
-      const a = innerRadiusAu + Math.random() * (outerRadiusAu - innerRadiusAu);
+      const a = innerRadiusAu + rand() * (outerRadiusAu - innerRadiusAu);
       particles.push({
         a0: a,
         adot: 0,
-        e0: Math.random() * MAX_ECCENTRICITY,
+        e0: rand() * MAX_ECCENTRICITY,
         edot: 0,
-        I0: Math.random() * maxInclination(a),
+        I0: rand() * maxInclination(a),
         Idot: 0,
-        L0: Math.random() * 360,
+        L0: rand() * 360,
         Ldot: (360 * 36525) / orbitalPeriodDays(a),
-        peri0: Math.random() * 360,
+        peri0: rand() * 360,
         peridot: 0,
-        node0: Math.random() * 360,
+        node0: rand() * 360,
         nodedot: 0
       });
     }
@@ -653,7 +665,7 @@ export class SolarSystemScene {
       positions[i * 3] = p.x;
       positions[i * 3 + 1] = p.y;
       positions[i * 3 + 2] = p.z;
-      const dim = 0.5 + Math.random() * 0.5;
+      const dim = 0.5 + rand() * 0.5;
       colors[i * 3] = base.r * dim;
       colors[i * 3 + 1] = base.g * dim;
       colors[i * 3 + 2] = base.b * dim;

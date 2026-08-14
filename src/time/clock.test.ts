@@ -47,6 +47,23 @@ describe("SimClock", () => {
     expect(clock.simDate).toBe(10);
   });
 
+  it("starts running by default", () => {
+    const clock = new SimClock({ daysSinceJ2000: 0, warp: WARP_PRESETS.dayPerSecond });
+    clock.tick(2);
+    expect(clock.simDate).toBeCloseTo(2, 10);
+  });
+
+  it("starts paused when constructed with paused: true", () => {
+    const clock = new SimClock({
+      daysSinceJ2000: 5,
+      warp: WARP_PRESETS.dayPerSecond,
+      paused: true
+    });
+    clock.tick(60);
+    expect(clock.simDate).toBe(5);
+    expect(clock.paused).toBe(true);
+  });
+
   it("resumes advancing after unpausing", () => {
     const clock = new SimClock({ daysSinceJ2000: 0, warp: WARP_PRESETS.dayPerSecond });
     clock.setPaused(true);

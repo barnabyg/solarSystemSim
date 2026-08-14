@@ -29,6 +29,22 @@ import { initTimeControls } from "./ui/time-controls";
 const app = document.getElementById("app");
 if (!app) throw new Error("missing #app mount point");
 
+/** The visual-regression suite's determinism seams (ticket #13). */
+const simParams = new URLSearchParams(location.search);
+
+/**
+ * Days past J2000.0 for the sim's start date: today's real date, or the
+ * pinned date from `?simDate=YYYY-MM-DD` when the visual-regression suite
+ * asks for a deterministic start (ticket #13). An absent or unparseable
+ * value falls back to today.
+ */
+function simStartDays(): number {
+  const param = simParams.get("simDate");
+  if (!param) return dateToDaysSinceJ2000(new Date());
+  const days = dateToDaysSinceJ2000(new Date(`${param}T00:00:00Z`));
+  return Number.isNaN(days) ? dateToDaysSinceJ2000(new Date()) : days;
+}
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 // Ticket #11: ACES filmic tone mapping (the premium roll-off; OutputPass
@@ -41,8 +57,16 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 // Sim date starts at today's real date; warp defaults to one sim-day per
-// real second so motion is immediately visible.
-const clock = new SimClock({ daysSinceJ2000: dateToDaysSinceJ2000(new Date()) });
+// real second so motion is immediately visible. Ticket #13: the golden
+// screenshot suite needs a deterministic scene (the sim otherwise starts at
+// today, so every body would drift a little each real day and the goldens
+// would decay), so `?simDate=YYYY-MM-DD` pins the start date and
+// `?paused=1` freezes the clock from frame one; without the parameters the
+// sim keeps its normal behavior.
+const clock = new SimClock({
+  daysSinceJ2000: simStartDays(),
+  paused: simParams.get("paused") === "1"
+});
 
 // Ticket #6 time controls: the bottom-center control bar (pause, warp
 // slider, presets), keyboard shortcuts, and tab-blur pause all write to the
