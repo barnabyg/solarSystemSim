@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CameraRig, type CameraState } from "./camera/camera";
 import { SolarSystemScene } from "./scene/scene";
 import { dateToDaysSinceJ2000, SimClock, simDateToIso } from "./time/clock";
+import { initTimeControls } from "./ui/time-controls";
 
 // Ticket #5 camera: the camera rig (free flight & focus) drives the view.
 // The scene supplies the rig's hooks — body positions, focus distances, and
@@ -17,6 +18,11 @@ app.appendChild(renderer.domElement);
 // Sim date starts at today's real date; warp defaults to one sim-day per
 // real second so motion is immediately visible.
 const clock = new SimClock({ daysSinceJ2000: dateToDaysSinceJ2000(new Date()) });
+
+// Ticket #6 time controls: the bottom-center control bar (pause, warp
+// slider, presets), keyboard shortcuts, and tab-blur pause all write to the
+// clock; the corner readout below mirrors it every frame.
+initTimeControls(clock);
 
 let solarSystem!: SolarSystemScene;
 const cameraRig = new CameraRig(window.innerWidth / window.innerHeight, {

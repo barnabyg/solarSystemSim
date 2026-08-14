@@ -17,6 +17,51 @@ export const WARP_PRESETS = {
   monthPerSecond: 2629746
 } as const;
 
+/** The warp range the time controls offer: real time up to one month/s. */
+export const WARP_MIN = 1;
+export const WARP_MAX = WARP_PRESETS.monthPerSecond;
+
+/** Clamp a warp rate into the time-controls range. */
+export function clampWarp(rate: number): number {
+  return Math.min(WARP_MAX, Math.max(WARP_MIN, rate));
+}
+
+/**
+ * Keyboard +/- warp adjustment: double (direction 1) or halve (direction -1)
+ * the current rate, clamped into the time-controls range.
+ */
+export function adjustWarp(rate: number, direction: 1 | -1): number {
+  return clampWarp(direction > 0 ? rate * 2 : rate / 2);
+}
+
+/**
+ * Human-readable label for a warp rate, e.g. the readout next to the slider:
+ * presets get their friendly names (1×, 1 h/s, 1 d/s, 1 mo/s); derived rates
+ * scale to the largest unit worth at least one of.
+ */
+export function formatWarp(rate: number): string {
+  if (rate === 1) return "1×";
+  if (rate >= WARP_PRESETS.monthPerSecond) {
+    return `${formatWarpValue(rate / WARP_PRESETS.monthPerSecond)} mo/s`;
+  }
+  if (rate >= WARP_PRESETS.dayPerSecond) {
+    return `${formatWarpValue(rate / WARP_PRESETS.dayPerSecond)} d/s`;
+  }
+  if (rate >= WARP_PRESETS.hourPerSecond) {
+    return `${formatWarpValue(rate / WARP_PRESETS.hourPerSecond)} h/s`;
+  }
+  if (rate >= 60) {
+    return `${formatWarpValue(rate / 60)} min/s`;
+  }
+  return `${formatWarpValue(rate)}×`;
+}
+
+function formatWarpValue(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  if (value >= 10) return value.toFixed(0);
+  return value.toFixed(1);
+}
+
 export interface SimClockOptions {
   /** Sim date at construction, days past J2000.0. Defaults to J2000.0. */
   daysSinceJ2000?: number;
@@ -60,6 +105,14 @@ export class SimClock {
   tick(realSeconds: number): void {
     if (this.isPaused) return;
     this.currentDays += (realSeconds * this.warpRate) / SECONDS_PER_DAY;
+  }
+
+  /**
+   * Step the sim date by a fixed number of days, independent of pause and
+   * warp — the arrow-key "step time" control (one day per press).
+   */
+  step(days: number): void {
+    this.currentDays += days;
   }
 }
 

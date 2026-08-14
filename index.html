@@ -42,7 +42,7 @@
       #hint {
         position: absolute;
         left: 50%;
-        bottom: 28px;
+        bottom: 92px;
         transform: translateX(-50%);
         color: #cdd8ff;
         font: 500 13px/1.4 system-ui, sans-serif;
@@ -56,13 +56,89 @@
         user-select: none;
         pointer-events: none;
       }
+      /* Corner sim-date readout (ticket #6): advances with time warp. */
+      #sim-date {
+        position: absolute;
+        top: 14px;
+        right: 16px;
+        color: #cdd8ff;
+        font: 500 13px/1.4 system-ui, sans-serif;
+        letter-spacing: 0.06em;
+        padding: 6px 12px;
+        border-radius: 8px;
+        background: rgba(8, 12, 28, 0.72);
+        border: 1px solid rgba(140, 165, 255, 0.25);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+        user-select: none;
+        z-index: 10;
+      }
+      /* Bottom-center time controls (ticket #6). */
+      #time-controls {
+        position: absolute;
+        left: 50%;
+        bottom: 16px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 14px;
+        border-radius: 14px;
+        background: rgba(8, 12, 28, 0.72);
+        border: 1px solid rgba(140, 165, 255, 0.25);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+        user-select: none;
+        z-index: 10;
+      }
+      #time-controls button {
+        color: #dfe7ff;
+        font: 500 12px/1 system-ui, sans-serif;
+        letter-spacing: 0.04em;
+        background: rgba(140, 165, 255, 0.1);
+        border: 1px solid rgba(140, 165, 255, 0.3);
+        border-radius: 8px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      #time-controls button:hover {
+        background: rgba(140, 165, 255, 0.2);
+      }
+      #time-controls button[aria-pressed="true"] {
+        background: rgba(255, 180, 90, 0.22);
+        border-color: rgba(255, 180, 90, 0.5);
+      }
+      #time-controls .preset-btn[aria-pressed="true"] {
+        background: rgba(140, 165, 255, 0.28);
+        border-color: rgba(140, 165, 255, 0.6);
+      }
+      #warp-slider {
+        width: 180px;
+        accent-color: #8ca5ff;
+        cursor: pointer;
+      }
+      #warp-label {
+        min-width: 56px;
+        text-align: right;
+        color: #cdd8ff;
+        font: 500 12px/1 system-ui, sans-serif;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="hint">Drag to look around — scroll to zoom — click a planet</div>
+    <div id="sim-date"></div>
+    <div id="time-controls">
+      <button id="pause-btn" type="button" aria-pressed="false">Pause</button>
+      <button type="button" class="preset-btn" data-warp-preset="1">1×</button>
+      <button type="button" class="preset-btn" data-warp-preset="3600">1 h/s</button>
+      <button type="button" class="preset-btn" data-warp-preset="86400">1 d/s</button>
+      <button type="button" class="preset-btn" data-warp-preset="2629746">1 mo/s</button>
+      <input id="warp-slider" type="range" min="0" max="1000" step="1" aria-label="Time warp" />
+      <span id="warp-label">1 d/s</span>
+    </div>
     <div id="boot-status" hidden></div>
-    <div id="sim-date" hidden></div>
     <div id="camera-state" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { dateToDaysSinceJ2000, SECONDS_PER_DAY, SimClock, simDateToIso, WARP_PRESETS } from "./clock";
+import {
+  adjustWarp,
+  dateToDaysSinceJ2000,
+  formatWarp,
+  SECONDS_PER_DAY,
+  SimClock,
+  simDateToIso,
+  WARP_PRESETS
+} from "./clock";
 
 describe("warp presets", () => {
   it("maps each preset to the exact sim-seconds per real-second", () => {
@@ -62,6 +70,79 @@ describe("SimClock", () => {
     expect(clock.simDate).toBe(3);
     expect(clock.warp).toBe(WARP_PRESETS.dayPerSecond);
     expect(clock.paused).toBe(false);
+  });
+
+  it("steps the sim date forward by whole days", () => {
+    const clock = new SimClock({ daysSinceJ2000: 0 });
+    clock.step(1);
+    expect(clock.simDate).toBe(1);
+    clock.step(2);
+    expect(clock.simDate).toBe(3);
+  });
+
+  it("steps backward with a negative amount", () => {
+    const clock = new SimClock({ daysSinceJ2000: 10 });
+    clock.step(-1);
+    expect(clock.simDate).toBe(9);
+  });
+
+  it("steps even while paused", () => {
+    const clock = new SimClock({ daysSinceJ2000: 0, warp: WARP_PRESETS.dayPerSecond });
+    clock.setPaused(true);
+    clock.tick(60);
+    expect(clock.simDate).toBe(0);
+    clock.step(1);
+    expect(clock.simDate).toBe(1);
+  });
+
+  it("stepping leaves the warp rate and pause state untouched", () => {
+    const clock = new SimClock({ daysSinceJ2000: 0, warp: WARP_PRESETS.hourPerSecond });
+    clock.setPaused(true);
+    clock.step(3);
+    expect(clock.simDate).toBe(3);
+    expect(clock.warp).toBe(WARP_PRESETS.hourPerSecond);
+    expect(clock.paused).toBe(true);
+  });
+});
+
+describe("adjustWarp", () => {
+  it("doubles the warp rate when stepping up", () => {
+    expect(adjustWarp(1, 1)).toBe(2);
+    expect(adjustWarp(43200, 1)).toBe(86400);
+  });
+
+  it("halves the warp rate when stepping down", () => {
+    expect(adjustWarp(2, -1)).toBe(1);
+    expect(adjustWarp(86400, -1)).toBe(43200);
+  });
+
+  it("clamps at the real-time floor", () => {
+    expect(adjustWarp(1, -1)).toBe(1);
+  });
+
+  it("clamps at the month-per-second ceiling", () => {
+    expect(adjustWarp(WARP_PRESETS.monthPerSecond, 1)).toBe(WARP_PRESETS.monthPerSecond);
+  });
+});
+
+describe("formatWarp", () => {
+  it("labels the presets with their friendly names", () => {
+    expect(formatWarp(1)).toBe("1×");
+    expect(formatWarp(WARP_PRESETS.hourPerSecond)).toBe("1 h/s");
+    expect(formatWarp(WARP_PRESETS.dayPerSecond)).toBe("1 d/s");
+    expect(formatWarp(WARP_PRESETS.monthPerSecond)).toBe("1 mo/s");
+  });
+
+  it("scales derived rates to the largest whole unit", () => {
+    expect(formatWarp(2)).toBe("2×");
+    expect(formatWarp(1800)).toBe("30 min/s");
+    expect(formatWarp(172800)).toBe("2 d/s");
+    expect(formatWarp(26297460)).toBe("10 mo/s");
+  });
+
+  it("shows one decimal for fractional units", () => {
+    expect(formatWarp(90)).toBe("1.5 min/s");
+    expect(formatWarp(129600)).toBe("1.5 d/s");
   });
 });
 
