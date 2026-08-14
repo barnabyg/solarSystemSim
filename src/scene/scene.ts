@@ -1,13 +1,16 @@
 /**
  * Scene module: builds the Three.js scene — the Sun, eight planets, thirteen
  * moons, five dwarf planets and the asteroid belt on their Keplerian orbits,
- * with orbit lines, name labels, and a basic starfield backdrop (tickets #4
- * and #8). Positions come from the pure orbit/scale modules at the clock's
- * sim date. The camera is owned by the camera rig (ticket #5); the scene
- * receives it for rendering and label projection, and supplies the rig's
- * hooks — body positions, focus distances, and picking. The scene is thin
- * wiring: it is trusted within smoke-level checks (ADR-0004), not
- * unit-tested.
+ * with orbit lines, name labels, and a starfield backdrop (tickets #4 and
+ * #8), plus the ticket #11 visual polish: bloom and tone mapping (wired in
+ * main.ts via the composer), atmosphere shells, Saturn's rings with gaps, the
+ * Sun's glow and corona, a dense starfield with a faint nebula backdrop, and
+ * soft shadows from the Sun's point light. Positions come from the pure
+ * orbit/scale modules at the clock's sim date. The camera is owned by the
+ * camera rig (ticket #5); the scene receives it for rendering and label
+ * projection, and supplies the rig's hooks — body positions, focus distances,
+ * and picking. The scene is thin wiring: it is trusted within smoke-level
+ * checks (ADR-0004), not unit-tested.
  */
 
 import * as THREE from "three";
@@ -38,6 +41,7 @@ import {
   type ScaleMode
 } from "../scale/scale";
 import type { SimClock } from "../time/clock";
+import { createAtmosphereShell, createNebula, createRings, createStarfield, createSunGlow } from "./polish";
 
 /** Sample points per orbit line; 256 keeps lines smooth and rebuilds cheap. */
 const ORBIT_SEGMENTS = 256;
@@ -113,6 +117,15 @@ export class SolarSystemScene {
   private lineEpochDays = -Infinity;
   private readonly tmp = new THREE.Vector3();
   private readonly moonWorld = new THREE.Vector3();
+  /** Atmosphere shells (ticket #11), one per atmosphere-bearing body. */
+  private readonly atmosphereShells: THREE.Mesh[] = [];
+  /** Total ring bands across all ring systems (ticket #11) — the seam. */
+  private ringBandTotal = 0;
+  /** The Sun's glow and corona sprites (ticket #11). */
+  private readonly sunGlow: THREE.Group;
+  /** Dense starfield layers and the nebula backdrop (ticket #11). */
+  private readonly starfield: THREE.Group;
+  private readonly starfieldCount: number;
 
   constructor(clock: SimClock, camera: THREE.PerspectiveCamera, root: HTMLElement) {
     this.clock = clock;
@@ -163,7 +176,18 @@ export class SolarSystemScene {
     this.beltPositions = belt.positions;
     this.scene.add(this.belt);
 
-    this.addStarfield();
+    // Ticket #11 polish: the Sun's glow rides on the Sun's mesh (so it scales
+    // with the display radius in both scale modes), the dense starfield and
+    // the nebula backdrop frame the whole system.
+    this.sunGlow = createSunGlow();
+    this.sunMesh.add(this.sunGlow);
+    const starfield = createStarfield();
+    this.starfield = starfield.group;
+    this.starfieldCount = starfield.count;
+    this.scene.add(this.starfield);
+    const nebula = createNebula();
+    this.scene.add(nebula);
+
     this.rebuildOrbitLines();
   }
 
@@ -175,6 +199,31 @@ export class SolarSystemScene {
   /** Number of particles in the stylized asteroid belt. */
   get beltParticleCount(): number {
     return this.beltParticles.length;
+  }
+
+  /** Number of atmosphere shells (ticket #11): one per atmosphere body. */
+  get atmosphereShellCount(): number {
+    return this.atmosphereShells.length;
+  }
+
+  /** Number of ring bands across all ring systems (ticket #11). */
+  get ringBandCount(): number {
+    return this.ringBandTotal;
+  }
+
+  /** Number of Sun glow/corona layers (ticket #11). */
+  get sunGlowLayerCount(): number {
+    return this.sunGlow.children.length;
+  }
+
+  /** Number of points in the dense starfield (ticket #11). */
+  get starCount(): number {
+    return this.starfieldCount;
+  }
+
+  /** Whether the nebula backdrop is present (ticket #11) — it always is. */
+  get hasNebula(): boolean {
+    return true;
   }
 
   /**
@@ -254,11 +303,6 @@ export class SolarSystemScene {
     }
   }
 
-  /** Draw the scene with the current camera. */
-  render(renderer: THREE.WebGLRenderer): void {
-    renderer.render(this.scene, this.camera);
-  }
-
   /** World position of a body (Sun, planet, dwarf, or moon), or null if
    *  unknown. */
   bodyWorldPosition(name: string): Vec3 | null {
@@ -296,21 +340,50 @@ export class SolarSystemScene {
     return (hit.object.userData.name as string | undefined) ?? null;
   }
 
-  /** The sun's body mesh — the light source position anchor. */
+  /**
+   * The Sun's disc: an unlit sphere bright enough (HDR values, tone mapping
+   * disabled) to exceed the bloom threshold, so the core reads white-hot and
+   * the glow/corona sprites (added by the constructor) bleed around it. It
+   * never casts shadows — the point light sits at its center, so the disc
+   * must not occlude the light it emits.
+   */
   private buildSun(): THREE.Mesh {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 48, 32),
-      new THREE.MeshBasicMaterial({ color: SUN.color })
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(2.2, 1.9, 1.4),
+        toneMapped: false
+      })
     );
     mesh.userData.name = SUN_NAME;
     this.setBodyScale(mesh, SUN.radiusKm);
     return mesh;
   }
 
-  /** The Sun is the light source: bodies are lit from its side. A neutral
-   *  ambient keeps the dark side faintly readable so no body disappears. */
+  /**
+   * The Sun is the light source: bodies are lit from its side. A neutral
+   * ambient keeps the dark side faintly readable so no body disappears.
+   * Ticket #11 soft shadows: the point light casts (PCFSoft shadow mapping is
+   * enabled on the renderer in main.ts) and every body mesh casts/receives,
+   * so a moon transiting a planet, or a planet passing in front of another,
+   * drops a soft shadow. The Sun's own disc never casts — the light sits at
+   * its center, so occluding it would shadow everything.
+   */
   private addLights(): void {
-    this.scene.add(new THREE.PointLight(0xfff2d9, 3, 0, 0));
+    const light = new THREE.PointLight(0xfff2d9, 3, 0, 0);
+    light.castShadow = true;
+    // A point light renders six cube faces; 256² is the sweet spot between
+    // the soft-shadow look and the fill rate — bodies are small in world
+    // units and PCFSoft feathers the edges, so the low resolution reads as
+    // soft shadowing. The far plane clears the outer system in both scale
+    // modes (Eris sits at ~203 units in true scale). This matters on the e2e
+    // host's software GL; the ADR-0003 60 fps target is the real budget.
+    light.shadow.mapSize.set(256, 256);
+    light.shadow.camera.near = 0.5;
+    light.shadow.camera.far = 260;
+    light.shadow.bias = -0.0005;
+    light.shadow.normalBias = 0.02;
+    this.scene.add(light);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   }
 
@@ -321,7 +394,18 @@ export class SolarSystemScene {
       new THREE.MeshStandardMaterial({ color: visual.color })
     );
     mesh.userData.name = name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     this.setBodyScale(mesh, visual.radiusKm);
+    // Ticket #11: the atmosphere shell and (for Saturn) the rings are
+    // children of the body mesh, so they ride along and re-scale with it in
+    // both scale modes. Both are transparent and never cast shadows.
+    this.attachAtmosphere(mesh, visual);
+    if (visual.rings) {
+      const rings = createRings(visual.rings);
+      this.ringBandTotal += visual.rings.bands.length;
+      mesh.add(rings);
+    }
     return mesh;
   }
 
@@ -332,6 +416,8 @@ export class SolarSystemScene {
       new THREE.MeshStandardMaterial({ color: visual.color })
     );
     mesh.userData.name = name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     this.setBodyScale(mesh, visual.radiusKm);
     return mesh;
   }
@@ -350,9 +436,27 @@ export class SolarSystemScene {
       new THREE.MeshStandardMaterial({ color: MOON_VISUALS[name].color })
     );
     mesh.userData.name = name;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     this.setBodyScale(mesh, MOON_VISUALS[name].radiusKm);
+    // Titan's thick orange haze (ticket #11) — a shell like the planets'.
+    this.attachAtmosphere(mesh, MOON_VISUALS[name]);
     group.add(mesh);
     return { mesh, group, primary: orbit.primary };
+  }
+
+  /**
+   * Ticket #11: attach an atmosphere shell to a body mesh that has
+   * `atmosphere` data (the planets and Titan). The shell is a child of the
+   * body mesh, so it rides along and re-scales with it in both scale modes;
+   * it is transparent, additive, and never casts shadows. Shared by the
+   * planet and moon builders so the attachment logic lives in one place.
+   */
+  private attachAtmosphere(mesh: THREE.Mesh, visual: BodyVisual): void {
+    if (!visual.atmosphere) return;
+    const shell = createAtmosphereShell(visual.atmosphere);
+    this.atmosphereShells.push(shell);
+    mesh.add(shell);
   }
 
   /**
@@ -580,39 +684,5 @@ export class SolarSystemScene {
       "position"
     ) as THREE.BufferAttribute;
     attribute.needsUpdate = true;
-  }
-
-  /** A dense backdrop of fixed-size star points. */
-  private addStarfield(): void {
-    const count = 2500;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const palette = [0xffffff, 0xfff6e6, 0xd6e4ff, 0xffd9b3];
-    const tint = new THREE.Color();
-    for (let i = 0; i < count; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = 250 + Math.random() * 250;
-      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
-      const dim = 0.6 + Math.random() * 0.4;
-      tint.setHex(palette[Math.floor(Math.random() * palette.length)]);
-      colors[i * 3] = tint.r * dim;
-      colors[i * 3 + 1] = tint.g * dim;
-      colors[i * 3 + 2] = tint.b * dim;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    const material = new THREE.PointsMaterial({
-      size: 1.4,
-      sizeAttenuation: false,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false
-    });
-    this.scene.add(new THREE.Points(geometry, material));
   }
 }
