@@ -1,17 +1,19 @@
 /**
  * Soundscape module (ticket #12): a subtle procedural ambient pad plus short
  * UI feedback blips, synthesized at runtime with the Web Audio API — the sim
- * ships zero audio assets (guarded by the no-assets test). Everything routes
- * through one master gain, so the mute toggle silences the pad and every blip
- * together. Browsers block autoplay until a user gesture, so the context is
- * created on load but resumed on the first pointerdown/keydown: ambient audio
- * starts as soon as the browser allows, never behind a click-to-enable wall.
- * Audio synthesis internals are out of test scope (ADR-0004); the
- * user-facing promises — ambient starts and mutes, blips play on key
- * interactions, mute silences everything — are verified at the
+ * ships zero audio assets (guarded by the zero-assets e2e test). Everything
+ * routes through one master gain, so the mute toggle silences the pad and
+ * every blip together. Browsers block autoplay until a user gesture, so the
+ * context is created on load but resumed on the first pointerdown/keydown:
+ * ambient audio starts as soon as the browser allows, never behind a
+ * click-to-enable wall. Audio synthesis internals are out of test scope
+ * (ADR-0004); the user-facing promises — ambient starts and mutes, blips
+ * play on key interactions, mute silences everything — are verified at the
  * UI-interaction seam by the e2e suite through the window.__soundscape
  * mirror.
  */
+
+import { getElement } from "../ui/dom";
 
 export type BlipKind = "inspect" | "release" | "toggle" | "warp";
 
@@ -31,11 +33,7 @@ export interface SoundscapeState {
 }
 
 export interface Soundscape {
-  readonly muted: boolean;
-  setMuted(muted: boolean): void;
   blip(kind: BlipKind): void;
-  /** Resume the AudioContext (first user gesture); no-op once running. */
-  resume(): void;
   /** Live state mirror, republished to the e2e seam each frame. */
   readonly state: SoundscapeState;
 }
@@ -247,21 +245,6 @@ export function initSoundscape(): Soundscape {
   window.addEventListener("pointerdown", resume);
   window.addEventListener("keydown", resume);
 
-  return {
-    get muted() {
-      return state.muted;
-    },
-    setMuted,
-    blip,
-    resume,
-    get state() {
-      return state;
-    }
-  };
+  return { blip, state };
 }
 
-function getElement<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`missing #${id} element`);
-  return el as T;
-}

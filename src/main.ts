@@ -177,7 +177,7 @@ renderer.setAnimationLoop(() => {
   // #audio-status element, so the soundscape e2e spec can observe what was
   // actually played.
   e2eAudio.__soundscape = soundscape.state;
-  const audioText = `${soundscape.state.contextState}${soundscape.muted ? ",muted" : ""}`;
+  const audioText = `${soundscape.state.contextState}${soundscape.state.muted ? ",muted" : ""}`;
   if (audioText !== lastAudioText) {
     lastAudioText = audioText;
     if (audioStatusEl) audioStatusEl.textContent = audioText;

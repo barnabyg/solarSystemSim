@@ -1,4 +1,7 @@
+import { existsSync, readdirSync } from "node:fs";
+import { extname, join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import type { SoundscapeState } from "../../src/audio/soundscape";
 
 // Ticket #12 soundscape: a subtle procedural ambient pad plus soft UI
 // feedback blips, synthesized at runtime with the Web Audio API (zero audio
@@ -8,15 +11,16 @@ import { expect, test, type Page } from "@playwright/test";
 // of what was scheduled to the audio graph (context state, mute flag,
 // per-kind blip counts; muted blips are never scheduled). The synthesis
 // internals (oscillator wiring, chord banks) are out of test scope; the
-// zero-assets criterion is guarded by a unit test.
+// zero-assets acceptance criterion is guarded here as a deliverable-level
+// check.
 
-type BlipKind = "inspect" | "release" | "toggle" | "warp";
-
-interface AudioSeam {
-  contextState: AudioContextState | "unavailable";
-  muted: boolean;
-  ambient: boolean;
-  blips: Record<BlipKind, number>;
+/** The live soundscape mirror main.ts publishes every frame. */
+function readAudio(page: Page): Promise<SoundscapeState> {
+  return page.evaluate(() => {
+    const seam = (window as unknown as { __soundscape?: SoundscapeState }).__soundscape;
+    if (!seam) throw new Error("missing window.__soundscape seam");
+    return seam;
+  });
 }
 
 async function boot(page: Page): Promise<void> {
@@ -24,14 +28,44 @@ async function boot(page: Page): Promise<void> {
   await expect(page.locator("#boot-status")).toHaveText("booted");
 }
 
-/** The live soundscape mirror main.ts publishes every frame. */
-function readAudio(page: Page): Promise<AudioSeam> {
-  return page.evaluate(() => {
-    const seam = (window as unknown as { __soundscape?: AudioSeam }).__soundscape;
-    if (!seam) throw new Error("missing window.__soundscape seam");
-    return seam;
-  });
+// ---- Zero audio assets ---------------------------------------------------
+// Acceptance criterion "zero audio asset files in the build": the soundscape
+// is synthesized entirely at runtime, so neither the source tree nor public/
+// (which Vite copies verbatim into the build) may contain audio files. This
+// pins a deliverable constraint, like the roster check pins body counts.
+
+const AUDIO_EXTENSIONS = new Set([
+  ".aac",
+  ".aif",
+  ".aiff",
+  ".flac",
+  ".m4a",
+  ".mp3",
+  ".ogg",
+  ".opus",
+  ".wav",
+  ".wma"
+]);
+
+function collectFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) collectFiles(full, out);
+    else out.push(full);
+  }
+  return out;
 }
+
+test("the build ships zero audio asset files", () => {
+  const root = process.cwd();
+  const roots = ["src", "public"].filter((dir) => existsSync(join(root, dir)));
+  const audioFiles = roots
+    .flatMap((dir) => collectFiles(join(root, dir)))
+    .filter((file) => AUDIO_EXTENSIONS.has(extname(file).toLowerCase()));
+  expect(audioFiles).toEqual([]);
+});
+
+// ---- Soundscape behaviour ------------------------------------------------
 
 test("shows a mute toggle; ambient audio is active and the toggle silences it", async ({ page }) => {
   await boot(page);
@@ -92,7 +126,7 @@ test("mute silences all audio; unmute restores it", async ({ page }) => {
   await page.locator("#mute-btn").click();
   await expect(page.locator("#mute-btn")).toHaveAttribute("aria-pressed", "true");
 
-  // Every interaction while muted must not reach the speakers: the played
+  // Every interaction while muted must not schedule anything: the played
   // counts stay frozen. One attempt per blip kind — toggle (Space), warp
   // (preset), release (Escape), inspect (clicking the Sun's label, which the
   // free-flight overview keeps clear of the card).
@@ -100,10 +134,10 @@ test("mute silences all audio; unmute restores it", async ({ page }) => {
   await page.locator('[data-warp-preset="1"]').click();
   await page.keyboard.press("Escape");
   await page.locator('[data-body="Sun"]').click();
-  await page.waitForTimeout(250);
-  const after = await readAudio(page);
-  expect(after.blips).toEqual(before.blips);
-  expect(after.muted).toBe(true);
+  await expect
+    .poll(async () => (await readAudio(page)).blips, { timeout: 3000 })
+    .toEqual(before.blips);
+  await expect.poll(async () => (await readAudio(page)).muted).toBe(true);
 
   // Unmuting plays a soft confirm blip, and interactions sound again.
   await page.locator("#mute-btn").click();

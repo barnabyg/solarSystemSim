@@ -13,6 +13,7 @@
  */
 
 import type { Soundscape } from "../audio/soundscape";
+import { getElement } from "./dom";
 import {
   adjustWarp,
   clampWarp,
@@ -140,10 +141,4 @@ export function initTimeControls(clock: SimClock, sounds: Soundscape): void {
 
   syncPauseButton();
   syncWarpControls();
-}
-
-function getElement<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`missing #${id} element`);
-  return el as T;
 }
