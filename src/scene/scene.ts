@@ -634,7 +634,7 @@ export class SolarSystemScene {
     const maxInclination = (a: number) =>
       (Math.atan2(halfThicknessAu, a * (1 + MAX_ECCENTRICITY)) * 180) / Math.PI;
     // Deterministic layout (ticket #13): a fixed-seed PRNG instead of
-    // Math.random(), so the field renders identically every boot — the golden
+    // Math.random(), so the belt renders identically every boot — the golden
     // screenshot suite needs a stable scene. The per-frame motion (syncBelt)
     // is unaffected; only the construction is reproducible.
     const rand = createRng(BELT_RNG_SEED);

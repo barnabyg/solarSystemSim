@@ -53,9 +53,6 @@ declare global {
   }
 }
 
-/** The goldens captured by the three golden tests, in view order. */
-const captured: Buffer[] = [];
-
 async function boot(page: Page, url: string): Promise<void> {
   await page.goto(url);
   await expect(page.locator("#boot-status")).toHaveText("booted");
@@ -117,11 +114,10 @@ interface ShotStats {
 }
 
 /**
- * Count distinct colors and the luminance variance of a screenshot buffer,
- * evaluated in the page (a canvas decode — no image library needed). A blank
- * or broken frame has almost no color diversity and near-zero variance.
+ * Decode a screenshot buffer to RGBA pixels, evaluated in the page (a canvas
+ * decode — no image library needed). Shared by the stats and diff helpers.
  */
-async function shotStats(page: Page, buffer: Buffer): Promise<ShotStats> {
+async function decodePng(page: Page, buffer: Buffer): Promise<Uint8ClampedArray> {
   const src = `data:image/png;base64,${buffer.toString("base64")}`;
   return page.evaluate(async (dataUrl) => {
     const img = new Image();
@@ -132,65 +128,54 @@ async function shotStats(page: Page, buffer: Buffer): Promise<ShotStats> {
     canvas.height = img.height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     ctx.drawImage(img, 0, 0);
-    const { data } = ctx.getImageData(0, 0, img.width, img.height);
-    const colors = new Set<number>();
-    let sum = 0;
-    let sumSq = 0;
-    const n = data.length / 4;
-    for (let i = 0; i < data.length; i += 4) {
-      colors.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
-      const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-      sum += lum;
-      sumSq += lum * lum;
-    }
-    const mean = sum / n;
-    return { distinctColors: colors.size, luminanceVariance: sumSq / n - mean * mean };
+    return ctx.getImageData(0, 0, img.width, img.height).data;
   }, src);
+}
+
+/**
+ * Count distinct colors and the luminance variance of a screenshot buffer.
+ * A blank or broken frame has almost no color diversity and near-zero
+ * variance.
+ */
+async function shotStats(page: Page, buffer: Buffer): Promise<ShotStats> {
+  const data = await decodePng(page, buffer);
+  const colors = new Set<number>();
+  let sum = 0;
+  let sumSq = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    colors.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+    const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+    sum += lum;
+    sumSq += lum * lum;
+  }
+  const mean = sum / n;
+  return { distinctColors: colors.size, luminanceVariance: sumSq / n - mean * mean };
 }
 
 /** Fraction of pixels that differ visibly between two screenshots. */
 async function pixelDiffRatio(page: Page, a: Buffer, b: Buffer): Promise<number> {
-  const srcA = `data:image/png;base64,${a.toString("base64")}`;
-  const srcB = `data:image/png;base64,${b.toString("base64")}`;
-  return page.evaluate(async ([dataA, dataB]) => {
-    const decode = async (dataUrl: string): Promise<Uint8ClampedArray> => {
-      const img = new Image();
-      img.src = dataUrl;
-      await img.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-      ctx.drawImage(img, 0, 0);
-      return ctx.getImageData(0, 0, img.width, img.height).data;
-    };
-    const [da, db] = await Promise.all([decode(dataA), decode(dataB)]);
-    let changed = 0;
-    for (let i = 0; i < da.length; i += 4) {
-      const delta =
-        Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
-      if (delta > 24) changed++;
-    }
-    return changed / (da.length / 4);
-  }, [srcA, srcB] as const);
+  const [da, db] = await Promise.all([decodePng(page, a), decodePng(page, b)]);
+  let changed = 0;
+  for (let i = 0; i < da.length; i += 4) {
+    const delta =
+      Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
+    if (delta > 24) changed++;
+  }
+  return changed / (da.length / 4);
 }
 
 /**
- * Assert the golden for the current view, guard the frame against being
- * blank or broken, and stash it for the cross-view distinctness check.
+ * Assert the golden for the current view and guard the frame against being
+ * blank or broken.
  */
-async function assertGolden(page: Page, name: string, index: number): Promise<void> {
+async function assertGolden(page: Page, name: string): Promise<void> {
   await expect(page).toHaveScreenshot(name, { maxDiffPixelRatio: 0.001 });
   const shot = await page.screenshot();
   const stats = await shotStats(page, shot);
   expect(stats.distinctColors, `${name}: frame must not be blank`).toBeGreaterThan(2000);
   expect(stats.luminanceVariance, `${name}: frame must not be flat`).toBeGreaterThan(100);
-  captured[index] = shot;
 }
-
-// Serial: the goldens share the `captured` buffers for the final pairwise
-// distinctness check, so the tests must run in order in one worker.
-test.describe.configure({ mode: "serial" });
 
 test("smoke: boots headless with all 27 bodies, a responding camera, and no console errors", async ({
   page
@@ -226,7 +211,7 @@ test("smoke: boots headless with all 27 bodies, a responding camera, and no cons
 test("golden: the opening overview", async ({ page }) => {
   await boot(page, GOLDEN_URL);
   await settle(page);
-  await assertGolden(page, GOLDEN_OVERVIEW, 0);
+  await assertGolden(page, GOLDEN_OVERVIEW);
 });
 
 test("golden: a focused planet", async ({ page }) => {
@@ -241,7 +226,7 @@ test("golden: a focused planet", async ({ page }) => {
   await expect(page.locator("#fact-card")).toBeVisible();
 
   await settle(page); // the 0.7 s focus transition
-  await assertGolden(page, GOLDEN_FOCUSED, 1);
+  await assertGolden(page, GOLDEN_FOCUSED);
 });
 
 test("golden: the true-scale view", async ({ page }) => {
@@ -249,12 +234,32 @@ test("golden: the true-scale view", async ({ page }) => {
   await page.locator("#scale-toggle").click();
   await expect(page.locator("#scale-mode")).toHaveText("true");
   await settle(page); // the overview reframe (free-flight distance scales in one frame)
-  await assertGolden(page, GOLDEN_TRUE_SCALE, 2);
+  await assertGolden(page, GOLDEN_TRUE_SCALE);
 });
 
-test("the three goldens are genuinely different views", async ({ page }) => {
-  expect(captured).toHaveLength(3);
-  const [overview, focused, trueScale] = captured;
+test("the three key views are genuinely different views", async ({ page }) => {
+  await boot(page, GOLDEN_URL);
+
+  // Re-derive the three golden states in one page (same deterministic picks
+  // as the golden tests) and diff them pairwise: each view must differ from
+  // the others by more than a floor, proving the goldens captured three
+  // genuinely different views rather than copies of one.
+  await settle(page);
+  const overview = await page.screenshot();
+
+  await page.locator("#scale-toggle").click();
+  await expect(page.locator("#scale-mode")).toHaveText("true");
+  await settle(page);
+  const trueScale = await page.screenshot();
+  await page.locator("#scale-toggle").click();
+  await expect(page.locator("#scale-mode")).toHaveText("compressed");
+
+  const target = await topmostLabel(page, PLANETS);
+  await page.locator(`[data-body="${target}"]`).click();
+  await expect(page.locator("#camera-state")).toHaveText(`focus:${target}`);
+  await settle(page);
+  const focused = await page.screenshot();
+
   const pairs: Array<[string, Buffer, Buffer]> = [
     ["overview vs focused planet", overview, focused],
     ["overview vs true-scale", overview, trueScale],
