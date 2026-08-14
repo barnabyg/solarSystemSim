@@ -27,14 +27,17 @@ async function clickBody(page: Page, name: string): Promise<void> {
  * point (it orbits ~6 display radii out, so a transit lasts moments), and a
  * passing moon's label can cover the anchor point too. Between attempts the
  * sim advances ~1 day per second, so the obstruction moves on and the next
- * attempt hits the intended body.
+ * attempt hits the intended body. The budget is generous: under the suite's
+ * parallel load the software-GL host drops to ~20 fps, stretching each
+ * attempt's wall-clock cost, and a transit obstruction can linger for
+ * several sim days of retries.
  */
 async function inspect(page: Page, name: string): Promise<void> {
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     await clickBody(page, name);
     const state = await page.locator("#camera-state").textContent();
     if (state === `focus:${name}`) return;
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(800);
   }
   throw new Error(`could not focus ${name} through the canvas after retries`);
 }

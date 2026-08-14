@@ -28,6 +28,7 @@
 
 import * as THREE from "three";
 import type { AtmosphereVisual, RingBand, RingVisual } from "../body/catalog";
+import { createRng } from "../lib/random";
 
 /** Atmosphere shell radius, in units of the body's radius. */
 const ATMOSPHERE_SHELL_RADIUS = 1.15;
@@ -37,6 +38,14 @@ const RING_TILT = 0.466;
 const RING_TEXTURE_WIDTH = 256;
 /** Outer radius of the starfield shell, world units. */
 const STARFIELD_OUTER = 500;
+/**
+ * Fixed seeds for the procedural starfield and nebula (ticket #13). They are
+ * built from random positions and colors; fixed seeds make them render
+ * identically on every boot, which the golden screenshot suite needs.
+ */
+const STARFIELD_SEED_SMALL = 0x57a1;
+const STARFIELD_SEED_LARGE = 0x8b1e;
+const NEBULA_SEED = 0x9e4d;
 
 /** Fresnel atmosphere shader: glow strongest at the day-lit limb. */
 const ATMOSPHERE_VERTEX = /* glsl */ `
@@ -243,20 +252,23 @@ export function createSunGlow(): THREE.Group {
 }
 
 /** One starfield layer of `count` fixed-size points on a shell. */
-function createStarLayer(count: number, size: number, opacity: number): THREE.Points {
+function createStarLayer(count: number, size: number, opacity: number, seed: number): THREE.Points {
+  // Fixed-seed layout (ticket #13): the layer renders identically on every
+  // boot, which the golden screenshot suite needs.
+  const rand = createRng(seed);
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const palette = [0xffffff, 0xfff6e6, 0xd6e4ff, 0xffd9b3];
   const tint = new THREE.Color();
   for (let i = 0; i < count; i++) {
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(2 * Math.random() - 1);
-    const r = 250 + Math.random() * (STARFIELD_OUTER - 250);
+    const theta = rand() * Math.PI * 2;
+    const phi = Math.acos(2 * rand() - 1);
+    const r = 250 + rand() * (STARFIELD_OUTER - 250);
     positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
     positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
     positions[i * 3 + 2] = r * Math.cos(phi);
-    const dim = 0.6 + Math.random() * 0.4;
-    tint.setHex(palette[Math.floor(Math.random() * palette.length)]);
+    const dim = 0.6 + rand() * 0.4;
+    tint.setHex(palette[Math.floor(rand() * palette.length)]);
     colors[i * 3] = tint.r * dim;
     colors[i * 3 + 1] = tint.g * dim;
     colors[i * 3 + 2] = tint.b * dim;
@@ -280,8 +292,8 @@ function createStarLayer(count: number, size: number, opacity: number): THREE.Po
 /** A dense starfield: many small dim stars plus fewer larger bright ones. */
 export function createStarfield(): { group: THREE.Group; count: number } {
   const group = new THREE.Group();
-  const small = createStarLayer(5000, 1.1, 0.8);
-  const large = createStarLayer(800, 2.0, 1.0);
+  const small = createStarLayer(5000, 1.1, 0.8, STARFIELD_SEED_SMALL);
+  const large = createStarLayer(800, 2.0, 1.0, STARFIELD_SEED_LARGE);
   group.add(small, large);
   // The count is derived from the layers actually built, so the seam that
   // mirrors it cannot drift from the construction.
@@ -297,6 +309,9 @@ export function createStarfield(): { group: THREE.Group; count: number } {
  * stay in front).
  */
 export function createNebula(): THREE.Mesh {
+  // Fixed-seed blotches (ticket #13): the backdrop renders identically on
+  // every boot, which the golden screenshot suite needs.
+  const rand = createRng(NEBULA_SEED);
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
   canvas.height = 512;
@@ -311,10 +326,10 @@ export function createNebula(): THREE.Mesh {
   ];
   for (let i = 0; i < 42; i++) {
     const [r, g, b] = palette[i % palette.length];
-    const x = Math.random() * canvas.width;
-    const y = Math.random() * canvas.height;
-    const radius = 80 + Math.random() * 220;
-    const alpha = 0.10 + Math.random() * 0.14;
+    const x = rand() * canvas.width;
+    const y = rand() * canvas.height;
+    const radius = 80 + rand() * 220;
+    const alpha = 0.1 + rand() * 0.14;
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
     gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha})`);
     gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
