@@ -40,14 +40,33 @@ import type { SimClock } from "../time/clock";
 /** Sample points per orbit line; 256 keeps lines smooth and rebuilds cheap. */
 const ORBIT_SEGMENTS = 256;
 /**
- * Rebuild heliocentric orbit lines when the sim date has drifted this many
- * days. Element rates are per century (~1e-4 deg/day of shape drift), so a
- * month of sim time is invisible — and every body's period is longer than 30
- * days, so a body always sits exactly on its freshly sampled line. Moon
- * orbit lines never rebuild: the moon elements carry no shape rates, so the
- * planetocentric path is constant and just rides along with its primary.
+ * Rebuild orbit lines when the sim date has drifted this many days. Element
+ * rates are per century (~1e-4 deg/day of shape drift), so a month of sim
+ * time is invisible — and every body's period is longer than 30 days, so a
+ * body always sits exactly on its freshly sampled line. This covers the
+ * heliocentric lines (planets + dwarf planets) and the planetocentric moon
+ * lines: the moon elements carry apsidal and nodal precession rates too, so
+ * their shapes drift slowly and need the same refresh.
  */
 const ORBIT_REBUILD_DAYS = 30;
+
+/**
+ * Visuals of every body that can be a moon's primary — the eight planets and
+ * the five dwarf planets (Charon orbits Pluto). One map, so a moon's primary
+ * needs no kind dispatch.
+ */
+const PRIMARY_VISUALS: Record<PlanetName | DwarfName, BodyVisual> = {
+  ...PLANET_VISUALS,
+  ...DWARF_VISUALS
+};
+
+/** Visuals of every body in the roster, keyed by canonical name. */
+const ALL_VISUALS: Record<string, BodyVisual> = {
+  [SUN_NAME]: SUN,
+  ...PLANET_VISUALS,
+  ...MOON_VISUALS,
+  ...DWARF_VISUALS
+};
 
 /**
  * A moon's rendered state: its mesh (a child of `group`), the group that
@@ -72,6 +91,9 @@ export class SolarSystemScene {
   private readonly moons = new Map<MoonName, MoonRender>();
   /** Heliocentric orbit lines (planets + dwarf planets), by body name. */
   private readonly orbitLines = new Map<PlanetName | DwarfName, THREE.Line>();
+  /** Planetocentric moon orbit lines, by moon name (children of the moon's
+   *  group, so they ride along with the primary). */
+  private readonly moonLines = new Map<MoonName, THREE.Line>();
   private readonly labels = new Map<string, HTMLDivElement>();
   private readonly belt: THREE.Points;
   /** One stylized particle per asteroid, on real Keplerian elements. */
@@ -218,12 +240,7 @@ export class SolarSystemScene {
 
   /** Physical radius [km] of a body, or undefined for unknown names. */
   private bodyRadiusKm(name: string): number | undefined {
-    if (name === SUN_NAME) return SUN.radiusKm;
-    return (
-      PLANET_VISUALS[name as PlanetName]?.radiusKm ??
-      DWARF_VISUALS[name as DwarfName]?.radiusKm ??
-      MOON_VISUALS[name as MoonName]?.radiusKm
-    );
+    return ALL_VISUALS[name]?.radiusKm;
   }
 
   /** The body whose mesh is under a client-space screen point, or null. */
@@ -278,12 +295,11 @@ export class SolarSystemScene {
   /**
    * Build a moon's frame: a group that rides on the primary's world
    * position, holding the moon mesh (moved each frame to its planetocentric
-   * offset) and the moon's orbit line (constant shape — moon elements carry
-   * no rates — so it is sampled once and follows the primary for free).
+   * offset). The planetocentric orbit line is created and refreshed by
+   * `rebuildOrbitLines` into the same group.
    */
   private buildMoon(name: MoonName): MoonRender {
     const orbit = MOON_ELEMENTS[name];
-    const primaryVisual = this.primaryVisual(orbit.primary);
     const group = new THREE.Object3D();
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(compressedRadius(MOON_VISUALS[name].radiusKm), 16, 12),
@@ -291,20 +307,13 @@ export class SolarSystemScene {
     );
     mesh.userData.name = name;
     group.add(mesh);
-    group.add(this.buildMoonOrbitLine(name, primaryVisual));
     return { mesh, group, primary: orbit.primary };
-  }
-
-  /** Physical visual of a body that can be a moon's primary. */
-  private primaryVisual(primary: PlanetName | DwarfName): BodyVisual {
-    if (primary === "Pluto") return DWARF_VISUALS.Pluto;
-    return PLANET_VISUALS[primary as PlanetName];
   }
 
   /** Planetocentric offset of a moon at `days`, in world units. */
   private moonOffset(name: MoonName, days: number): Vec3 {
     const orbit = MOON_ELEMENTS[name];
-    const primary = this.primaryVisual(orbit.primary);
+    const primary = PRIMARY_VISUALS[orbit.primary];
     const displayRadius = compressedRadius(primary.radiusKm);
     const offset = scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days));
     return eclipticToWorld(offset);
@@ -317,23 +326,30 @@ export class SolarSystemScene {
     return { x: this.moonWorld.x, y: this.moonWorld.y, z: this.moonWorld.z };
   }
 
-  private buildMoonOrbitLine(name: MoonName, primary: BodyVisual): THREE.Line {
+  /**
+   * Planetocentric orbit positions for one full period, in world units. The
+   * period comes from the JPL mean-longitude rate (360° × 36525 / Ldot) —
+   * Kepler's third law does not apply to the moon elements' tiny AU
+   * semi-major axes. Sampled fresh on the rebuild cadence so the slow
+   * apsidal/nodal precession of the elements never leaves the moon off its
+   * line.
+   */
+  private sampleMoonOrbit(name: MoonName, days: number): Float32Array {
     const orbit = MOON_ELEMENTS[name];
-    const period = orbitalPeriodDays(orbit.elements.a0);
+    const primary = PRIMARY_VISUALS[orbit.primary];
     const displayRadius = compressedRadius(primary.radiusKm);
+    const period = (360 * 36525) / orbit.elements.Ldot;
     const points = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
     for (let i = 0; i <= ORBIT_SEGMENTS; i++) {
       const t = (i / ORBIT_SEGMENTS) * period;
       const p = eclipticToWorld(
-        scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, t))
+        scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days + t))
       );
       points[i * 3] = p.x;
       points[i * 3 + 1] = p.y;
       points[i * 3 + 2] = p.z;
     }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(points, 3));
-    return new THREE.Line(geometry, this.orbitLineMaterial());
+    return points;
   }
 
   private orbitLineMaterial(): THREE.LineBasicMaterial {
@@ -378,10 +394,27 @@ export class SolarSystemScene {
         this.orbitLines.set(name, line);
         this.scene.add(line);
       }
-      const geometry = line.geometry as THREE.BufferGeometry;
-      geometry.setAttribute("position", new THREE.BufferAttribute(points, 3));
-      geometry.computeBoundingSphere();
+      this.setLinePoints(line, points);
     }
+    // Moon lines are planetocentric, so they live inside the moon's group
+    // (which rides on the primary) and only the geometry needs refreshing.
+    for (const [name, moon] of this.moons) {
+      const points = this.sampleMoonOrbit(name, this.lineEpochDays);
+      let line = this.moonLines.get(name);
+      if (!line) {
+        line = new THREE.Line(new THREE.BufferGeometry(), this.orbitLineMaterial());
+        line.userData.name = name;
+        this.moonLines.set(name, line);
+        moon.group.add(line);
+      }
+      this.setLinePoints(line, points);
+    }
+  }
+
+  private setLinePoints(line: THREE.Line, points: Float32Array): void {
+    const geometry = line.geometry as THREE.BufferGeometry;
+    geometry.setAttribute("position", new THREE.BufferAttribute(points, 3));
+    geometry.computeBoundingSphere();
   }
 
   /** Heliocentric orbit positions for one full period, in world units. */
@@ -413,17 +446,22 @@ export class SolarSystemScene {
    */
   private buildBelt(): { points: THREE.Points; particles: OrbitalElements[]; positions: Float32Array } {
     const { innerRadiusAu, outerRadiusAu, halfThicknessAu, particleCount } = ASTEROID_BELT;
-    // The inclination cap keeps |z| ≲ halfThicknessAu at the belt's inner edge.
-    const maxInclination = (Math.atan2(halfThicknessAu, innerRadiusAu) * 180) / Math.PI;
+    /** Belt eccentricities stay small; real main-belt values cluster near 0.1. */
+    const MAX_ECCENTRICITY = 0.15;
+    // The inclination cap is per-particle: i_max(a) = atan2(halfThicknessAu,
+    // a·(1 + e_max)) keeps |z| ≲ halfThicknessAu even at aphelion, so the
+    // band honors the catalog's vertical half-thickness at every radius.
+    const maxInclination = (a: number) =>
+      (Math.atan2(halfThicknessAu, a * (1 + MAX_ECCENTRICITY)) * 180) / Math.PI;
     const particles: OrbitalElements[] = [];
     for (let i = 0; i < particleCount; i++) {
       const a = innerRadiusAu + Math.random() * (outerRadiusAu - innerRadiusAu);
       particles.push({
         a0: a,
         adot: 0,
-        e0: Math.random() * 0.15,
+        e0: Math.random() * MAX_ECCENTRICITY,
         edot: 0,
-        I0: Math.random() * maxInclination,
+        I0: Math.random() * maxInclination(a),
         Idot: 0,
         L0: Math.random() * 360,
         Ldot: (360 * 36525) / orbitalPeriodDays(a),

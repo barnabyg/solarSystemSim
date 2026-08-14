@@ -54,6 +54,33 @@ async function boot(page: Page): Promise<void> {
   await expect(page.locator("#boot-status")).toHaveText("booted");
 }
 
+/** The 13 moons and 5 dwarfs, in ALL_BODY_NAMES order (after Sun + planets). */
+const MOONS = ALL_BODY_NAMES.slice(9, 22);
+const DWARFS = ALL_BODY_NAMES.slice(22);
+
+/**
+ * The first candidate whose label is unambiguous right now. At the overview
+ * zoom the 27 labels overlap (nearby bodies sit a few pixels apart), and the
+ * browser routes a label click to whichever label is topmost at the click
+ * point — so a click target must be verified topmost at its own center first.
+ * Call this with the sim paused so the hit test and the click agree exactly.
+ */
+async function topmostLabel(page: Page, candidates: string[]): Promise<string> {
+  const target = await page.evaluate((names) => {
+    const isTopmost = (name: string): boolean => {
+      const el = document.querySelector<HTMLElement>(`[data-body="${name}"]`);
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return top?.closest("[data-body]")?.getAttribute("data-body") === name;
+    };
+    return names.find(isTopmost) ?? null;
+  }, candidates);
+  if (!target) throw new Error("no unambiguous label among the candidates at this moment");
+  return target;
+}
+
 test("boots with all 27 bodies labeled and the belt rendered, no console errors", async ({
   page
 }) => {
@@ -111,39 +138,11 @@ test("the asteroid belt rotates differentially between Mars and Jupiter", async 
 test("moons orbit their planets: the camera follows a focused moon", async ({ page }) => {
   await boot(page);
 
-  // Pick a moon whose label is unambiguous right now (the overview's 27
-  // labels overlap; the browser routes a click to whichever label is topmost
-  // at the click point). Pause first so the hit test and the click agree
-  // exactly — labels drift as the sim advances.
-  const MOONS = [
-    "Moon",
-    "Phobos",
-    "Deimos",
-    "Io",
-    "Europa",
-    "Ganymede",
-    "Callisto",
-    "Titan",
-    "Enceladus",
-    "Mimas",
-    "Miranda",
-    "Triton",
-    "Charon"
-  ];
+  // Pick a moon whose label is unambiguous right now, with the sim paused so
+  // the hit test and the click agree exactly — labels drift as time advances.
   await page.keyboard.press("Space");
   await expect(page.locator("#pause-btn")).toHaveText("Resume");
-  const target = await page.evaluate((candidates) => {
-    const isTopmost = (name: string): boolean => {
-      const el = document.querySelector<HTMLElement>(`[data-body="${name}"]`);
-      if (!el) return false;
-      const r = el.getBoundingClientRect();
-      if (r.width <= 0 || r.height <= 0) return false;
-      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-      return top?.closest("[data-body]")?.getAttribute("data-body") === name;
-    };
-    return candidates.find(isTopmost) ?? null;
-  }, MOONS);
-  if (!target) throw new Error("no unambiguous moon label at this moment");
+  const target = await topmostLabel(page, MOONS);
   await page.locator(`[data-body="${target}"]`).click();
   await expect(page.locator("#camera-state")).toHaveText(`focus:${target}`);
 
@@ -166,6 +165,40 @@ test("moons orbit their planets: the camera follows a focused moon", async ({ pa
   expect(later.focused).toBe(target);
 });
 
+test("dwarf planets orbit the Sun: the camera follows a focused dwarf", async ({ page }) => {
+  await boot(page);
+
+  // Same overlap-aware pick as the moon test, then warp to a month per
+  // second: a dwarf's true motion is slow (~0.2°/day for Ceres, less for the
+  // others), so its label alone would barely move — following it proves the
+  // camera tracks the heliocentric orbit.
+  await page.keyboard.press("Space");
+  await expect(page.locator("#pause-btn")).toHaveText("Resume");
+  const target = await topmostLabel(page, DWARFS);
+  await page.locator(`[data-body="${target}"]`).click();
+  await expect(page.locator("#camera-state")).toHaveText(`focus:${target}`);
+
+  await page.keyboard.press("Space");
+  await expect(page.locator("#pause-btn")).toHaveText("Pause");
+  await page.locator('[data-warp-preset="2629746"]').click();
+  await expect(page.locator("#warp-label")).toHaveText("1 mo/s");
+  await page.waitForTimeout(1200);
+  const posBefore = (await page.evaluate(() => window.__cameraState!.position))!;
+  await page.waitForTimeout(2000);
+  const later = await page.evaluate(() => window.__cameraState!);
+  const moved = Math.hypot(
+    later.position[0] - posBefore[0],
+    later.position[1] - posBefore[1],
+    later.position[2] - posBefore[2]
+  );
+  // Pluto/Haumea/Makemake move ~0.03-0.08 units over the window at this
+  // warp; the threshold is lower than the moons' so the slowest dwarf still
+  // clears it.
+  expect(moved).toBeGreaterThan(0.03);
+  expect(later.mode).toBe("focus");
+  expect(later.focused).toBe(target);
+});
+
 test("moons and dwarf planets are focusable through their labels", async ({ page }) => {
   // At the overview zoom the 27 labels overlap (nearby bodies sit a few
   // pixels apart), and the browser routes a label click to whichever label
@@ -174,23 +207,6 @@ test("moons and dwarf planets are focusable through their labels", async ({ page
   // the topmost element at their own center is themselves — then click
   // those. Each category runs on a fresh page so every click happens at the
   // opening overview with no camera-transition interference.
-  const MOONS = [
-    "Moon",
-    "Phobos",
-    "Deimos",
-    "Io",
-    "Europa",
-    "Ganymede",
-    "Callisto",
-    "Titan",
-    "Enceladus",
-    "Mimas",
-    "Miranda",
-    "Triton",
-    "Charon"
-  ];
-  const DWARFS = ["Pluto", "Ceres", "Eris", "Makemake", "Haumea"];
-
   for (const category of [MOONS, DWARFS]) {
     await boot(page);
     // Freeze the labels so the hit test below and the subsequent click agree
@@ -198,18 +214,7 @@ test("moons and dwarf planets are focusable through their labels", async ({ page
     await page.keyboard.press("Space");
     await expect(page.locator("#pause-btn")).toHaveText("Resume");
 
-    const target = await page.evaluate((candidates) => {
-      const isTopmost = (name: string): boolean => {
-        const el = document.querySelector<HTMLElement>(`[data-body="${name}"]`);
-        if (!el) return false;
-        const r = el.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) return false;
-        const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-        return top?.closest("[data-body]")?.getAttribute("data-body") === name;
-      };
-      return candidates.find(isTopmost) ?? null;
-    }, category);
-    if (!target) throw new Error("no unambiguous label in this category at this moment");
+    const target = await topmostLabel(page, category);
 
     await page.locator(`[data-body="${target}"]`).click();
     await expect(page.locator("#camera-state")).toHaveText(`focus:${target}`);
