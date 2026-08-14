@@ -2,11 +2,14 @@
  * Post-processing pipeline (ticket #11): bloom + ACES tone mapping.
  *
  * The premium look ships as a composer chain — RenderPass → UnrealBloomPass →
- * OutputPass — rendering into a half-float buffer so bright pixels (the Sun,
- * the corona sprites, the brightest stars) exceed the bloom threshold and
- * bleed into a soft glow, with OutputPass applying the renderer's ACES filmic
- * tone mapping and color-space conversion as the final step. This is the
- * "stylized realism with bloom and glow" from spec user story 30.
+ * OutputPass — rendering into a half-float buffer so bright pixels (the Sun's
+ * hot core, the core glow sprite, the brightest stars) exceed the bloom
+ * threshold and bleed into a soft glow, with OutputPass applying the
+ * renderer's ACES filmic tone mapping and color-space conversion as the final
+ * step. This is the "stylized realism with bloom and glow" from spec user
+ * story 30. Ticket #19 tightened the pass — lower strength/radius and a
+ * higher threshold — so the glow hugs the Sun instead of washing over the
+ * inner planets; the corona sprite is intentionally below the cutoff now.
  *
  * The composer's internal resolution adapts to the renderer: real GPUs (the
  * ADR-0003 high-end-desktop target) run the full pipeline at full screen
@@ -29,12 +32,14 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 
 /** Bloom strength — how much the bright pixels bleed. */
-const BLOOM_STRENGTH = 0.7;
+const BLOOM_STRENGTH = 0.3;
 /** Bloom radius — how wide the glow spreads. */
-const BLOOM_RADIUS = 0.55;
-/** Luminance threshold — pixels brighter than this bloom. The Sun and the
- *  corona sit well above it; stars and planets mostly below. */
-const BLOOM_THRESHOLD = 0.85;
+const BLOOM_RADIUS = 0.3;
+/** Luminance threshold — pixels brighter than this bloom. The Sun sits well
+ *  above it; the corona, stars and planets mostly below, so the glow stays
+ *  tight around the Sun instead of washing over the inner system (ticket
+ *  #19). */
+const BLOOM_THRESHOLD = 0.9;
 /** Composer pixel ratio on software rasterizers (the e2e host). */
 const SOFTWARE_PIXEL_RATIO = 0.25;
 
