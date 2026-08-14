@@ -2,13 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   AU_KM,
   COMPRESSED_SCALE,
+  TRUE_SCALE,
   compressedDistance,
   compressedMoonOrbitRadius,
   compressedRadius,
   eclipticToWorld,
+  scaleDistance,
+  scaleDistanceRatio,
   scaleMoonPosition,
   scalePosition,
-  type CompressedScaleConfig
+  scaleRadius,
+  trueScaleDistance,
+  trueScaleRadius,
+  type CompressedScaleConfig,
+  type TrueScaleConfig
 } from "./scale";
 import { MOON_ELEMENTS, MOON_NAMES, PLANET_ELEMENTS, PLANET_NAMES } from "../orbit/elements";
 import { PLANET_VISUALS } from "../body/catalog";
@@ -122,6 +129,155 @@ describe("eclipticToWorld", () => {
     expect(north.y).toBe(1);
     // -0 === 0, but toBe uses Object.is; toBeCloseTo accepts both.
     expect(north.z).toBeCloseTo(0, 10);
+  });
+});
+
+// ---- True-scale mode (ticket #10) ----------------------------------------
+//
+// True-scale mode shows real heliocentric distances — display distance is
+// linear in AU — while bodies keep a readable minimum size (ADR-0002).
+// Independent check values are hand-computed from the config literals
+// (distancePerAu = 3, radiusPerKm = 1e-6, min = 0.1, max = 0.9), and the
+// planet ratios come from the orbit module's semi-major axes — not
+// recomputed by the code under test.
+
+const NEPTUNE_AU = PLANET_ELEMENTS.Neptune.a0; // 30.06992276
+
+describe("trueScaleDistance", () => {
+  it("maps 1 AU to the distance-per-AU constant", () => {
+    expect(trueScaleDistance(1)).toBeCloseTo(TRUE_SCALE.distancePerAu, 10);
+  });
+
+  it("is linear in AU — real distances", () => {
+    expect(trueScaleDistance(2)).toBeCloseTo(TRUE_SCALE.distancePerAu * 2, 10);
+    expect(trueScaleDistance(NEPTUNE_AU)).toBeCloseTo(TRUE_SCALE.distancePerAu * NEPTUNE_AU, 6);
+  });
+
+  it("keeps the real Earth-to-Neptune ratio", () => {
+    // The whole point of true-scale mode: Neptune displays ~30× farther than
+    // Earth, exactly its real distance ratio.
+    const ratio = trueScaleDistance(NEPTUNE_AU) / trueScaleDistance(1);
+    expect(ratio).toBeCloseTo(NEPTUNE_AU, 6);
+  });
+
+  it("honors a custom config", () => {
+    const config: TrueScaleConfig = { ...TRUE_SCALE, distancePerAu: 5 };
+    expect(trueScaleDistance(1, config)).toBeCloseTo(5, 10);
+  });
+});
+
+describe("trueScaleRadius", () => {
+  it("clamps small bodies to the readable minimum", () => {
+    // 6371 km × 1e-6 = 0.0064, far below the 0.1 floor.
+    expect(trueScaleRadius(6371)).toBe(TRUE_SCALE.minBodyRadius);
+    expect(trueScaleRadius(69911)).toBe(TRUE_SCALE.minBodyRadius);
+  });
+
+  it("scales bodies above the floor linearly in km", () => {
+    // 696340 km × 1e-6 = 0.69634 — the only body clear of the floor.
+    expect(trueScaleRadius(696340)).toBeCloseTo(0.69634, 5);
+  });
+
+  it("renders the Sun largest", () => {
+    expect(trueScaleRadius(696340)).toBeGreaterThan(trueScaleRadius(69911));
+  });
+
+  it("clamps oversized bodies to the maximum", () => {
+    expect(trueScaleRadius(1e9)).toBe(TRUE_SCALE.maxBodyRadius);
+  });
+});
+
+describe("scale mode dispatch", () => {
+  it("scaleDistance picks the mode's distance mapping", () => {
+    expect(scaleDistance(NEPTUNE_AU, "compressed")).toBeCloseTo(16.4508, 3);
+    expect(scaleDistance(NEPTUNE_AU, "true")).toBeCloseTo(90.2098, 3);
+    // At 1 AU the two mappings coincide by construction (distanceScale = 3).
+    expect(scaleDistance(1, "compressed")).toBeCloseTo(scaleDistance(1, "true"), 10);
+  });
+
+  it("scaleRadius picks the mode's radius mapping", () => {
+    expect(scaleRadius(6371, "compressed")).toBeCloseTo(0.1596, 3);
+    expect(scaleRadius(6371, "true")).toBe(TRUE_SCALE.minBodyRadius);
+  });
+
+  it("scalePosition dispatches on the mode", () => {
+    // 2 AU: compressed = 3·sqrt(2) ≈ 4.243, true = 3·2 = 6.
+    expect(scalePosition({ x: 2, y: 0, z: 0 }, "compressed").x).toBeCloseTo(4.24264, 4);
+    expect(scalePosition({ x: 2, y: 0, z: 0 }, "true")).toEqual({ x: 6, y: 0, z: 0 });
+  });
+
+  it("true-scale scalePosition preserves direction and the origin", () => {
+    // r = 5, scale factor = 15 / 5 = 3.
+    const s = scalePosition({ x: 3, y: 4, z: 0 }, "true");
+    expect(s.y / s.x).toBeCloseTo(4 / 3, 10);
+    expect(s.x).toBeCloseTo(9, 10);
+    expect(s.y).toBeCloseTo(12, 10);
+    expect(scalePosition({ x: 0, y: 0, z: 0 }, "true")).toEqual({ x: 0, y: 0, z: 0 });
+  });
+});
+
+describe("scaleDistanceRatio", () => {
+  it("is the ratio of true to compressed display distance at a given AU", () => {
+    // true = 3·au, compressed = 3·sqrt(au) → ratio = sqrt(au).
+    expect(scaleDistanceRatio(4)).toBeCloseTo(2, 10);
+    expect(scaleDistanceRatio(1)).toBeCloseTo(1, 10);
+  });
+
+  it("measures the true-scale zoom-out factor at Neptune", () => {
+    // The camera reframes by this factor when the toggle flips: ~sqrt(30).
+    expect(scaleDistanceRatio(NEPTUNE_AU)).toBeCloseTo(Math.sqrt(NEPTUNE_AU), 6);
+  });
+});
+
+describe("moon orbits in true-scale mode", () => {
+  /** Primary display radius in true-scale mode, matching the scene. */
+  function truePrimaryDisplayRadius(radiusKm: number): number {
+    return trueScaleRadius(radiusKm);
+  }
+
+  it("keeps the Moon outside a true-scale Earth", () => {
+    // Earth's true-scale disc is 0.1; the Moon's orbit maps to
+    // 0.1 × (1.6 + 59.34 × 0.08) ≈ 0.635 — clear of the disc.
+    const d = compressedMoonOrbitRadius(6371, truePrimaryDisplayRadius(6371), 0.0025695553);
+    expect(d).toBeGreaterThan(truePrimaryDisplayRadius(6371));
+    expect(d).toBeCloseTo(0.635, 2);
+  });
+
+  it("keeps every moon outside its primary's true-scale disc", () => {
+    for (const moon of MOON_NAMES) {
+      const primary = MOON_ELEMENTS[moon].primary;
+      const primaryKm =
+        primary === "Pluto"
+          ? 1188.3
+          : PLANET_VISUALS[primary as (typeof PLANET_NAMES)[number]].radiusKm;
+      const display = truePrimaryDisplayRadius(primaryKm);
+      const d = compressedMoonOrbitRadius(primaryKm, display, MOON_ELEMENTS[moon].elements.a0);
+      expect(d).toBeGreaterThan(display);
+    }
+  });
+
+  it("preserves each primary's physical moon order in true-scale mode", () => {
+    const byPrimary = new Map<string, (typeof MOON_NAMES)[number][]>();
+    for (const moon of MOON_NAMES) {
+      const primary = MOON_ELEMENTS[moon].primary;
+      byPrimary.set(primary, [...(byPrimary.get(primary) ?? []), moon]);
+    }
+    for (const [primary, moons] of byPrimary) {
+      const primaryKm =
+        primary === "Pluto"
+          ? 1188.3
+          : PLANET_VISUALS[primary as (typeof PLANET_NAMES)[number]].radiusKm;
+      const display = truePrimaryDisplayRadius(primaryKm);
+      const physical = [...moons].sort(
+        (a, b) => MOON_ELEMENTS[a].elements.a0 - MOON_ELEMENTS[b].elements.a0
+      );
+      const rendered = physical.map((m) =>
+        compressedMoonOrbitRadius(primaryKm, display, MOON_ELEMENTS[m].elements.a0)
+      );
+      for (let i = 1; i < rendered.length; i++) {
+        expect(rendered[i]).toBeGreaterThan(rendered[i - 1]);
+      }
+    }
   });
 });
 

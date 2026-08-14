@@ -30,10 +30,12 @@ import {
 } from "../orbit/elements";
 import { orbitalPeriodDays, positionAt, type OrbitalElements, type Vec3 } from "../orbit/kepler";
 import {
-  compressedRadius,
   eclipticToWorld,
+  scaleDistanceRatio,
   scaleMoonPosition,
-  scalePosition
+  scalePosition,
+  scaleRadius,
+  type ScaleMode
 } from "../scale/scale";
 import type { SimClock } from "../time/clock";
 
@@ -100,6 +102,9 @@ export class SolarSystemScene {
   private readonly beltParticles: OrbitalElements[];
   private readonly beltPositions: Float32Array;
   private readonly clock: SimClock;
+  /** Active scale mode (ticket #10): compressed by default, true-scale when
+   *  the toggle is on. All scale dispatch flows through this field. */
+  private scaleMode: ScaleMode = "compressed";
   /** Meshes the camera rig picks against (Sun + planets + dwarfs + moons). */
   private readonly pickables: THREE.Object3D[] = [];
   private readonly raycaster = new THREE.Raycaster();
@@ -172,6 +177,42 @@ export class SolarSystemScene {
     return this.beltParticles.length;
   }
 
+  /**
+   * Ratio of the true-scale system size to the compressed size, measured at
+   * Neptune's semi-major axis: the factor the camera zooms out by when the
+   * toggle flips to true scale (and its inverse to flip back), so the same
+   * view stays framed in both modes.
+   */
+  get systemScaleRatio(): number {
+    return scaleDistanceRatio(PLANET_ELEMENTS.Neptune.a0);
+  }
+
+  /**
+   * Switch the scene's scale mode (compressed ↔ true-scale): every body mesh
+   * is re-sized to the mode's display radius and the orbit lines are
+   * re-sampled at the new mapping (they are otherwise cached for 30 sim
+   * days, so a toggle must invalidate them).
+   */
+  setScaleMode(mode: ScaleMode): void {
+    this.scaleMode = mode;
+    this.applyBodyScale();
+    this.rebuildOrbitLines();
+  }
+
+  /**
+   * Rendered display radius (mesh scale) of a body, or null if unknown —
+   * the scale-toggle e2e seam. Reads the actual mesh transform, like the
+   * belt seam reads the rendered particle buffer.
+   */
+  bodyScale(name: string): number | null {
+    let mesh: THREE.Object3D | undefined;
+    if (name === SUN_NAME) mesh = this.sunMesh;
+    else if (this.planetMeshes.has(name as PlanetName)) mesh = this.planetMeshes.get(name as PlanetName);
+    else if (this.dwarfMeshes.has(name as DwarfName)) mesh = this.dwarfMeshes.get(name as DwarfName);
+    else if (this.moons.has(name as MoonName)) mesh = this.moons.get(name as MoonName)?.mesh;
+    return mesh ? mesh.scale.x : null;
+  }
+
   /** Current world position of a belt particle — the e2e motion seam. */
   beltParticlePosition(index: number): Vec3 {
     const i = index * 3;
@@ -187,12 +228,12 @@ export class SolarSystemScene {
   sync(): void {
     const t = this.clock.simDate;
     for (const [name, mesh] of this.planetMeshes) {
-      const world = eclipticToWorld(scalePosition(positionAt(PLANET_ELEMENTS[name], t)));
+      const world = eclipticToWorld(scalePosition(positionAt(PLANET_ELEMENTS[name], t), this.scaleMode));
       mesh.position.set(world.x, world.y, world.z);
       this.syncLabel(this.labels.get(name)!, world);
     }
     for (const [name, mesh] of this.dwarfMeshes) {
-      const world = eclipticToWorld(scalePosition(positionAt(DWARF_ELEMENTS[name], t)));
+      const world = eclipticToWorld(scalePosition(positionAt(DWARF_ELEMENTS[name], t), this.scaleMode));
       mesh.position.set(world.x, world.y, world.z);
       this.syncLabel(this.labels.get(name)!, world);
     }
@@ -235,7 +276,7 @@ export class SolarSystemScene {
   focusDistance(name: string): number {
     const radiusKm = this.bodyRadiusKm(name);
     if (!radiusKm) return 3;
-    return Math.max(compressedRadius(radiusKm) * 4, 2.5);
+    return Math.max(scaleRadius(radiusKm, this.scaleMode) * 4, 2.5);
   }
 
   /** Physical radius [km] of a body, or undefined for unknown names. */
@@ -258,10 +299,11 @@ export class SolarSystemScene {
   /** The sun's body mesh — the light source position anchor. */
   private buildSun(): THREE.Mesh {
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(compressedRadius(SUN.radiusKm), 48, 32),
+      new THREE.SphereGeometry(1, 48, 32),
       new THREE.MeshBasicMaterial({ color: SUN.color })
     );
     mesh.userData.name = SUN_NAME;
+    this.setBodyScale(mesh, SUN.radiusKm);
     return mesh;
   }
 
@@ -275,20 +317,22 @@ export class SolarSystemScene {
   private buildPlanet(name: PlanetName): THREE.Mesh {
     const visual = PLANET_VISUALS[name];
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(compressedRadius(visual.radiusKm), 32, 16),
+      new THREE.SphereGeometry(1, 32, 16),
       new THREE.MeshStandardMaterial({ color: visual.color })
     );
     mesh.userData.name = name;
+    this.setBodyScale(mesh, visual.radiusKm);
     return mesh;
   }
 
   private buildDwarf(name: DwarfName): THREE.Mesh {
     const visual = DWARF_VISUALS[name];
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(compressedRadius(visual.radiusKm), 24, 12),
+      new THREE.SphereGeometry(1, 24, 12),
       new THREE.MeshStandardMaterial({ color: visual.color })
     );
     mesh.userData.name = name;
+    this.setBodyScale(mesh, visual.radiusKm);
     return mesh;
   }
 
@@ -302,19 +346,44 @@ export class SolarSystemScene {
     const orbit = MOON_ELEMENTS[name];
     const group = new THREE.Object3D();
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(compressedRadius(MOON_VISUALS[name].radiusKm), 16, 12),
+      new THREE.SphereGeometry(1, 16, 12),
       new THREE.MeshStandardMaterial({ color: MOON_VISUALS[name].color })
     );
     mesh.userData.name = name;
+    this.setBodyScale(mesh, MOON_VISUALS[name].radiusKm);
     group.add(mesh);
     return { mesh, group, primary: orbit.primary };
+  }
+
+  /**
+   * Size a body mesh to the active mode's display radius. Meshes are unit
+   * spheres; the mesh scale carries the radius, so a mode change is one
+   * scalar per mesh — no geometry rebuild. Raycasting and lighting respect
+   * the transform, so picking keeps working at either scale.
+   */
+  private setBodyScale(mesh: THREE.Mesh, radiusKm: number): void {
+    mesh.scale.setScalar(scaleRadius(radiusKm, this.scaleMode));
+  }
+
+  /** Re-size every body mesh to the active mode's display radius. */
+  private applyBodyScale(): void {
+    this.setBodyScale(this.sunMesh, SUN.radiusKm);
+    for (const [name, mesh] of this.planetMeshes) {
+      this.setBodyScale(mesh, PLANET_VISUALS[name].radiusKm);
+    }
+    for (const [name, mesh] of this.dwarfMeshes) {
+      this.setBodyScale(mesh, DWARF_VISUALS[name].radiusKm);
+    }
+    for (const [name, moon] of this.moons) {
+      this.setBodyScale(moon.mesh, MOON_VISUALS[name].radiusKm);
+    }
   }
 
   /** Planetocentric offset of a moon at `days`, in world units. */
   private moonOffset(name: MoonName, days: number): Vec3 {
     const orbit = MOON_ELEMENTS[name];
     const primary = PRIMARY_VISUALS[orbit.primary];
-    const displayRadius = compressedRadius(primary.radiusKm);
+    const displayRadius = scaleRadius(primary.radiusKm, this.scaleMode);
     const offset = scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days));
     return eclipticToWorld(offset);
   }
@@ -337,7 +406,7 @@ export class SolarSystemScene {
   private sampleMoonOrbit(name: MoonName, days: number): Float32Array {
     const orbit = MOON_ELEMENTS[name];
     const primary = PRIMARY_VISUALS[orbit.primary];
-    const displayRadius = compressedRadius(primary.radiusKm);
+    const displayRadius = scaleRadius(primary.radiusKm, this.scaleMode);
     const period = (360 * 36525) / orbit.elements.Ldot;
     const points = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
     for (let i = 0; i <= ORBIT_SEGMENTS; i++) {
@@ -427,7 +496,7 @@ export class SolarSystemScene {
     const points = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
     for (let i = 0; i <= ORBIT_SEGMENTS; i++) {
       const t = (i / ORBIT_SEGMENTS) * period;
-      const world = eclipticToWorld(scalePosition(positionAt(elements, days + t)));
+      const world = eclipticToWorld(scalePosition(positionAt(elements, days + t), this.scaleMode));
       points[i * 3] = world.x;
       points[i * 3 + 1] = world.y;
       points[i * 3 + 2] = world.z;
@@ -476,7 +545,7 @@ export class SolarSystemScene {
     const colors = new Float32Array(particleCount * 3);
     const base = new THREE.Color(0x9a8f82);
     for (let i = 0; i < particleCount; i++) {
-      const p = eclipticToWorld(scalePosition(positionAt(particles[i], this.clock.simDate)));
+      const p = eclipticToWorld(scalePosition(positionAt(particles[i], this.clock.simDate), this.scaleMode));
       positions[i * 3] = p.x;
       positions[i * 3 + 1] = p.y;
       positions[i * 3 + 2] = p.z;
@@ -502,7 +571,7 @@ export class SolarSystemScene {
   private syncBelt(t: number): void {
     const arr = this.beltPositions;
     for (let i = 0; i < this.beltParticles.length; i++) {
-      const p = eclipticToWorld(scalePosition(positionAt(this.beltParticles[i], t)));
+      const p = eclipticToWorld(scalePosition(positionAt(this.beltParticles[i], t), this.scaleMode));
       arr[i * 3] = p.x;
       arr[i * 3 + 1] = p.y;
       arr[i * 3 + 2] = p.z;

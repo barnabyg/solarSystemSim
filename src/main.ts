@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { CameraRig, type CameraState } from "./camera/camera";
+import type { Vec3 } from "./orbit/kepler";
 import { SolarSystemScene } from "./scene/scene";
 import { dateToDaysSinceJ2000, SimClock, simDateToIso } from "./time/clock";
 import { initFactCard } from "./ui/fact-card";
+import { initScaleToggle } from "./ui/scale-toggle";
 import { initTimeControls } from "./ui/time-controls";
 
 // Ticket #5 camera: the camera rig (free flight & focus) drives the view.
@@ -10,6 +12,9 @@ import { initTimeControls } from "./ui/time-controls";
 // picking — and the rig's canvas input handles drag/scroll/click.
 // Ticket #9 fact card: inspecting a body (canvas click or label click, both
 // of which focus it) opens the card; releasing focus closes it.
+// Ticket #10 scale toggle: flipping the mode re-draws the system at real
+// distances (true scale) or the playable compressed scale, then reframes the
+// camera by the system-scale ratio so the view stays coherent.
 
 const app = document.getElementById("app");
 if (!app) throw new Error("missing #app mount point");
@@ -47,6 +52,28 @@ const cameraRig = new CameraRig(
 );
 cameraRig.attach(renderer.domElement);
 solarSystem = new SolarSystemScene(clock, cameraRig.camera, app);
+
+// Ticket #10 scale toggle: the button flips the scene between compressed
+// scale (default) and true-scale mode, then reframes the camera by the
+// system-scale ratio so the same view stays framed and bodies remain
+// findable at real distances. The active mode is mirrored to the #scale-mode
+// seam (compressed | true) for the e2e suite.
+const scaleModeEl = document.getElementById("scale-mode");
+/** Mirror the active scale mode to the #scale-mode seam for the e2e suite. */
+function mirrorScaleMode(mode: string): void {
+  if (!scaleModeEl) return;
+  scaleModeEl.textContent = mode;
+  scaleModeEl.dataset.mode = mode;
+}
+mirrorScaleMode("compressed");
+initScaleToggle({
+  onChange: (mode) => {
+    solarSystem.setScaleMode(mode);
+    const ratio = solarSystem.systemScaleRatio;
+    cameraRig.adjustScale(mode === "true" ? ratio : 1 / ratio);
+    mirrorScaleMode(mode);
+  }
+});
 
 // The one-line hint stays up until the first interaction. It is
 // pointer-events: none, so clicks and drags pass through it to the canvas —
@@ -87,7 +114,11 @@ const simDateEl = document.getElementById("sim-date");
 const cameraStateEl = document.getElementById("camera-state");
 const rosterStatus = document.getElementById("roster-status");
 const e2eCamera = window as unknown as { __cameraState?: CameraState };
-const e2eScene = window as unknown as { __beltParticlePosition?: () => [number, number, number] };
+const e2eScene = window as unknown as {
+  __beltParticlePosition?: () => [number, number, number];
+  __bodyPosition?: (name: string) => Vec3 | null;
+  __bodyScale?: (name: string) => number | null;
+};
 
 rosterStatus!.dataset.bodies = String(solarSystem.bodyCount);
 rosterStatus!.dataset.belt = String(solarSystem.beltParticleCount);
@@ -98,6 +129,14 @@ e2eScene.__beltParticlePosition = () => {
   const p = solarSystem.beltParticlePosition(0);
   return [p.x, p.y, p.z];
 };
+// The body-position seam (ticket #10) exposes the rendered world position of
+// any body, so the scale-toggle test can assert the Earth↔Neptune distance
+// relationship in both scale modes.
+e2eScene.__bodyPosition = (name) => solarSystem.bodyWorldPosition(name);
+// The body-scale seam reads a body's rendered mesh scale — the same
+// surface the toggle test uses to assert bodies stay readable at real
+// distances (they shrink from compressed size, but never below the floor).
+e2eScene.__bodyScale = (name) => solarSystem.bodyScale(name);
 
 const frameTimer = new THREE.Clock();
 renderer.setAnimationLoop(() => {

@@ -46,9 +46,14 @@ const INITIAL_PITCH = Math.asin(INITIAL_POSITION.y / INITIAL_DISTANCE);
 const DRAG_SENSITIVITY = 0.005;
 /** Exponential zoom factor per wheel deltaY unit. */
 const WHEEL_SENSITIVITY = 0.0012;
-/** Zoom limits, world units. */
+/**
+ * Zoom limits, world units. The upper bound must frame the true-scale system
+ * (ticket #10): Neptune sits at ~90 units at true scale, and the toggle
+ * zooms the overview out by the system-scale ratio (~5.5× from ~28 to ~157),
+ * so 300 leaves room to pull back further from there.
+ */
 const MIN_DISTANCE = 0.6;
-const MAX_DISTANCE = 90;
+const MAX_DISTANCE = 300;
 /** Pitch clamp: just short of the poles so the view never flips. */
 const MAX_PITCH = Math.PI / 2 - 0.02;
 /** Pointer travel (px) under which a press-release counts as a click. */
@@ -177,12 +182,39 @@ export class CameraRig {
   focus(name: string): void {
     this.mode = "focus";
     this.focused = name;
+    this.beginDistanceTransition(this.hooks.getFocusDistance(name));
+    this.events.onInspect?.(name);
+  }
+
+  /**
+   * Reframe the view for a change in overall system scale (the true-scale
+   * toggle, ticket #10), so the same scene stays framed and bodies remain
+   * findable. In free flight the orbit distance scales by `factor` (the
+   * system-scale ratio — ~5.5× out to true scale, its inverse back). In
+   * focus the camera deliberately stays with the body — the orbit distance
+   * eases to the body's new preferred focus distance (which barely moves:
+   * both modes floor it near 2.5) while the target keeps tracking the body
+   * out to its real position, so the inspected body never drops out of
+   * view. The overview reframe is a free-flight concern.
+   */
+  adjustScale(factor: number): void {
+    if (this.mode === "focus" && this.focused) {
+      this.beginDistanceTransition(this.hooks.getFocusDistance(this.focused));
+    } else {
+      this.distance = clamp(this.distance * factor, MIN_DISTANCE, MAX_DISTANCE);
+    }
+  }
+
+  /**
+   * Start easing the orbit distance from the current view to `endDistance`
+   * (the target stays put — for focus it tracks the body in update()).
+   */
+  private beginDistanceTransition(endDistance: number): void {
     this.startTarget.copy(this.target);
     this.startDistance = this.distance;
-    this.endDistance = Math.max(this.hooks.getFocusDistance(name), MIN_DISTANCE);
+    this.endDistance = Math.max(endDistance, MIN_DISTANCE);
     this.transition = 0;
     this.distanceLocked = false;
-    this.events.onInspect?.(name);
   }
 
   /** Release focus and return to free flight from the current vantage. */

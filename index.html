@@ -72,12 +72,20 @@
         user-select: none;
         z-index: 10;
       }
-      /* Bottom-center time controls (ticket #6). */
-      #time-controls {
+      /* Bottom-center controls (ticket #6 time controls + ticket #10 scale
+         toggle): the wrapper centers the bar; the time controls keep their
+         panel styling inside it. */
+      #bottom-bar {
         position: absolute;
         left: 50%;
         bottom: 16px;
         transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        z-index: 10;
+      }
+      #time-controls {
         display: flex;
         align-items: center;
         gap: 12px;
@@ -87,7 +95,6 @@
         border: 1px solid rgba(140, 165, 255, 0.25);
         box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
         user-select: none;
-        z-index: 10;
       }
       #time-controls button {
         color: #dfe7ff;
@@ -109,6 +116,26 @@
       #time-controls .preset-btn[aria-pressed="true"] {
         background: rgba(140, 165, 255, 0.28);
         border-color: rgba(140, 165, 255, 0.6);
+      }
+      /* Scale-mode toggle (ticket #10): sits beside the time controls; the
+         amber pressed state marks true-scale mode. */
+      #scale-toggle {
+        color: #dfe7ff;
+        font: 500 12px/1 system-ui, sans-serif;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        background: rgba(140, 165, 255, 0.1);
+        border: 1px solid rgba(140, 165, 255, 0.3);
+        border-radius: 8px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      #scale-toggle:hover {
+        background: rgba(140, 165, 255, 0.2);
+      }
+      #scale-toggle[aria-pressed="true"] {
+        background: rgba(255, 180, 90, 0.22);
+        border-color: rgba(255, 180, 90, 0.5);
       }
       #warp-slider {
         width: 180px;
@@ -257,17 +284,25 @@
     <div id="app"></div>
     <div id="hint">Drag to look around — scroll to zoom — click a planet</div>
     <div id="sim-date"></div>
-    <div id="time-controls">
-      <button id="pause-btn" type="button" aria-pressed="false">Pause</button>
-      <button type="button" class="preset-btn" data-warp-preset="1">1×</button>
-      <button type="button" class="preset-btn" data-warp-preset="3600">1 h/s</button>
-      <button type="button" class="preset-btn" data-warp-preset="86400">1 d/s</button>
-      <button type="button" class="preset-btn" data-warp-preset="2629746">1 mo/s</button>
-      <input id="warp-slider" type="range" min="0" max="1000" step="1" aria-label="Time warp" />
-      <span id="warp-label">1 d/s</span>
+    <div id="bottom-bar">
+      <div id="time-controls">
+        <button id="pause-btn" type="button" aria-pressed="false">Pause</button>
+        <button type="button" class="preset-btn" data-warp-preset="1">1×</button>
+        <button type="button" class="preset-btn" data-warp-preset="3600">1 h/s</button>
+        <button type="button" class="preset-btn" data-warp-preset="86400">1 d/s</button>
+        <button type="button" class="preset-btn" data-warp-preset="2629746">1 mo/s</button>
+        <input id="warp-slider" type="range" min="0" max="1000" step="1" aria-label="Time warp" />
+        <span id="warp-label">1 d/s</span>
+      </div>
+      <!-- Ticket #10 scale toggle: flips between compressed and true-scale
+           mode; the button label and aria-pressed mirror the current mode. -->
+      <button id="scale-toggle" type="button" aria-pressed="false">Scale: Compressed</button>
     </div>
     <div id="boot-status" hidden></div>
     <div id="camera-state" hidden></div>
+    <!-- Ticket #10 seam: the scale-toggle e2e test asserts the active scale
+         mode from this element (compressed | true). -->
+    <div id="scale-mode" hidden></div>
     <!-- Ticket #8 roster seam: the full-roster smoke test asserts the scene's
          actual body count and belt particle count from this element. -->
     <div id="roster-status" hidden></div>
