@@ -46,9 +46,14 @@ const INITIAL_PITCH = Math.asin(INITIAL_POSITION.y / INITIAL_DISTANCE);
 const DRAG_SENSITIVITY = 0.005;
 /** Exponential zoom factor per wheel deltaY unit. */
 const WHEEL_SENSITIVITY = 0.0012;
-/** Zoom limits, world units. */
+/**
+ * Zoom limits, world units. The upper bound must frame the true-scale system
+ * (ticket #10): Neptune sits at ~90 units at true scale, and the toggle
+ * zooms the overview out by the system-scale ratio (~5.5× from ~28 to ~157),
+ * so 300 leaves room to pull back further from there.
+ */
 const MIN_DISTANCE = 0.6;
-const MAX_DISTANCE = 90;
+const MAX_DISTANCE = 300;
 /** Pitch clamp: just short of the poles so the view never flips. */
 const MAX_PITCH = Math.PI / 2 - 0.02;
 /** Pointer travel (px) under which a press-release counts as a click. */
@@ -195,6 +200,26 @@ export class CameraRig {
     // The target stays where it was — free flight resumes from the point
     // being orbited, so the view does not jump.
     this.events.onRelease?.();
+  }
+
+  /**
+   * Reframe the view for a change in overall system scale (the true-scale
+   * toggle, ticket #10), so the same scene stays framed and bodies remain
+   * findable. In free flight the orbit distance scales by `factor` (the
+   * system-scale ratio — ~5.5× out to true scale, its inverse back). In
+   * focus the distance eases to the body's new preferred focus distance
+   * while the target keeps tracking the body.
+   */
+  adjustScale(factor: number): void {
+    if (this.mode === "focus" && this.focused) {
+      this.startTarget.copy(this.target);
+      this.startDistance = this.distance;
+      this.endDistance = Math.max(this.hooks.getFocusDistance(this.focused), MIN_DISTANCE);
+      this.transition = 0;
+      this.distanceLocked = false;
+    } else {
+      this.distance = clamp(this.distance * factor, MIN_DISTANCE, MAX_DISTANCE);
+    }
   }
 
   /** Current view state — also the e2e observation seam. */
