@@ -1,9 +1,12 @@
 /**
- * Scene module: builds the Three.js scene for the walking skeleton (ticket #4)
- * — the Sun and eight planets on their Keplerian orbits, orbit lines, name
- * labels, and a basic starfield backdrop. Positions come from the pure
- * orbit/scale modules at the clock's sim date, so the scene itself is thin
- * wiring: it is trusted within smoke-level checks (ADR-0004), not unit-tested.
+ * Scene module: builds the Three.js scene — the Sun and eight planets on
+ * their Keplerian orbits, orbit lines, name labels, and a basic starfield
+ * backdrop (ticket #4). Positions come from the pure orbit/scale modules at
+ * the clock's sim date. The camera is owned by the camera rig (ticket #5);
+ * the scene receives it for rendering and label projection, and supplies the
+ * rig's hooks — body positions, focus distances, and picking. The scene is
+ * thin wiring: it is trusted within smoke-level checks (ADR-0004), not
+ * unit-tested.
  */
 
 import * as THREE from "three";
@@ -22,8 +25,6 @@ const ORBIT_SEGMENTS = 256;
  * body always sits exactly on its freshly sampled line.
  */
 const ORBIT_REBUILD_DAYS = 30;
-/** Overview camera placement: the whole compressed system fills the frame. */
-const CAMERA_POSITION = { x: 14, y: 12, z: 22 } as const;
 
 export class SolarSystemScene {
   readonly scene = new THREE.Scene();
@@ -31,27 +32,25 @@ export class SolarSystemScene {
   /** DOM layer that carries the body name labels. */
   readonly labelLayer: HTMLDivElement;
 
-  private readonly clock: SimClock;
   private readonly sunMesh: THREE.Mesh;
   private readonly planetMeshes = new Map<PlanetName, THREE.Mesh>();
   private readonly orbitLines = new Map<PlanetName, THREE.Line>();
   private readonly labels = new Map<PlanetName, HTMLDivElement>();
   private readonly sunLabel: HTMLDivElement;
+  private readonly clock: SimClock;
+  /** Meshes the camera rig picks against (Sun + planets). */
+  private readonly pickables: THREE.Object3D[] = [];
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly pickNdc = new THREE.Vector2();
   /** Sim date at which the orbit lines were last sampled. */
   private lineEpochDays = -Infinity;
   private readonly tmp = new THREE.Vector3();
 
-  constructor(clock: SimClock, root: HTMLElement, aspect: number) {
+  constructor(clock: SimClock, camera: THREE.PerspectiveCamera, root: HTMLElement) {
     this.clock = clock;
+    this.camera = camera;
 
     this.scene.background = new THREE.Color(0x05060f);
-    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 2000);
-    this.camera.position.set(CAMERA_POSITION.x, CAMERA_POSITION.y, CAMERA_POSITION.z);
-    this.camera.lookAt(0, 0, 0);
-    // The renderer refreshes matrixWorldInverse every frame; prime it once so
-    // the first frame's label projection is already correct.
-    this.camera.updateMatrixWorld(true);
-    this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert();
 
     this.labelLayer = document.createElement("div");
     this.labelLayer.className = "label-layer";
@@ -69,27 +68,17 @@ export class SolarSystemScene {
     }
 
     this.sunLabel = this.createLabel(SUN_NAME);
+    this.pickables.push(this.sunMesh, ...this.planetMeshes.values());
     this.addStarfield();
     this.rebuildOrbitLines();
   }
 
   /**
    * Advance the scene one frame: move every body to its position at the
-   * clock's current sim date, keep the labels glued to the bodies, and draw.
-   * Call once per rendered frame.
+   * clock's current sim date and keep the labels glued to the bodies. Call
+   * once per frame, before the camera rig's update and the render.
    */
-  renderFrame(renderer: THREE.WebGLRenderer): void {
-    this.sync();
-    renderer.render(this.scene, this.camera);
-  }
-
-  /** Update the camera for a new viewport aspect ratio. */
-  resize(aspect: number): void {
-    this.camera.aspect = aspect;
-    this.camera.updateProjectionMatrix();
-  }
-
-  private sync(): void {
+  sync(): void {
     const t = this.clock.simDate;
     for (const [name, mesh] of this.planetMeshes) {
       const world = eclipticToWorld(scalePosition(positionAt(PLANET_ELEMENTS[name], t)));
@@ -101,6 +90,44 @@ export class SolarSystemScene {
     if (Math.abs(t - this.lineEpochDays) >= ORBIT_REBUILD_DAYS) {
       this.rebuildOrbitLines();
     }
+  }
+
+  /** Draw the scene with the current camera. */
+  render(renderer: THREE.WebGLRenderer): void {
+    renderer.render(this.scene, this.camera);
+  }
+
+  /** World position of a body (Sun or planet), or null if unknown. */
+  bodyWorldPosition(name: string): Vec3 | null {
+    if (name === SUN_NAME) return { x: 0, y: 0, z: 0 };
+    const mesh = this.planetMeshes.get(name as PlanetName);
+    if (!mesh) return null;
+    return { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z };
+  }
+
+  /** Preferred focus orbit distance for a body, in world units. */
+  focusDistance(name: string): number {
+    const radiusKm = this.bodyRadiusKm(name);
+    if (!radiusKm) return 3;
+    return Math.max(compressedRadius(radiusKm) * 4, 2.5);
+  }
+
+  /** Physical radius [km] of a body, or undefined for unknown names. */
+  private bodyRadiusKm(name: string): number | undefined {
+    if (name === SUN_NAME) return SUN.radiusKm;
+    return PLANET_VISUALS[name as PlanetName]?.radiusKm;
+  }
+
+  /** The body whose mesh is under a client-space screen point, or null. */
+  pickBody(clientX: number, clientY: number): string | null {
+    this.pickNdc.set(
+      (clientX / window.innerWidth) * 2 - 1,
+      -(clientY / window.innerHeight) * 2 + 1
+    );
+    this.raycaster.setFromCamera(this.pickNdc, this.camera);
+    const hit = this.raycaster.intersectObjects(this.pickables, false)[0];
+    if (!hit) return null;
+    return (hit.object.userData.name as string | undefined) ?? null;
   }
 
   private buildSun(): THREE.Mesh {

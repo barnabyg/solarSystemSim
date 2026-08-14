@@ -2,7 +2,7 @@
 
 An exploration-first, entertainment-driven solar system simulator for the web — stylized realism, real orbital data, built with Vite + TypeScript + Three.js.
 
-> **Status:** walking skeleton (ticket #4) — the Sun and eight planets orbit at their real positions for today's date, with orbit lines, labels, and a starfield. Ready for the slice-one review; time controls UI (ticket #6) is next.
+> **Status:** walking skeleton + camera (tickets #4–#5) — the Sun and eight planets orbit at their real positions for today's date, with orbit lines, labels, and a starfield; the camera supports free flight (drag to look around, right-drag to pan, scroll to zoom) and focus (click a body to orbit and follow it, click empty space to release), opening Sun-centered with a one-line hint. Time controls UI (ticket #6) is next.
 
 ## Quickstart
 
