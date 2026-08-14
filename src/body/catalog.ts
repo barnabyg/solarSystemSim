@@ -16,8 +16,7 @@
  * needs its own.
  */
 
-import type { PlanetName } from "../orbit/elements";
-import type { MoonName, DwarfName } from "../orbit/elements";
+import type { DwarfName, MoonName, PlanetName } from "../orbit/elements";
 
 /** Physical equatorial radius [km], published value. */
 export interface BodyVisual {
