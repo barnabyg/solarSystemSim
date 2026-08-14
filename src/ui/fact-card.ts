@@ -10,8 +10,11 @@
  * The card is generic: given any body's canonical name it looks up the
  * catalog facts and renders them. Formatting is presentation-only, verified
  * at the UI-interaction seam (ADR-0004) by the e2e suite, not unit-tested.
+ * Ticket #12: showing the card plays a soft inspect chime and closing it a
+ * lower release note, through the soundscape.
  */
 
+import type { Soundscape } from "../audio/soundscape";
 import { factsFor, PLANET_FACTS } from "../body/catalog";
 
 /** Earth's diameter [km] — the reference for the "vs Earth" size bar. */
@@ -28,7 +31,7 @@ export interface FactCard {
   readonly open: boolean;
 }
 
-export function initFactCard(): FactCard {
+export function initFactCard(sounds: Soundscape): FactCard {
   const card = buildCard();
   document.body.appendChild(card);
 
@@ -61,10 +64,12 @@ export function initFactCard(): FactCard {
     vsLabel.textContent = fmtVsEarth(ratio);
     funFact.textContent = facts.funFact;
     card.hidden = false;
+    sounds.blip("inspect");
   }
 
   function hide(): void {
     card.hidden = true;
+    sounds.blip("release");
   }
 
   getElement<HTMLButtonElement>(card, "fact-card-close").addEventListener("click", hide);

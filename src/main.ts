@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { initSoundscape, type SoundscapeState } from "./audio/soundscape";
 import { CameraRig, type CameraState } from "./camera/camera";
 import type { Vec3 } from "./orbit/kepler";
 import { SolarSystemScene } from "./scene/scene";
@@ -15,6 +16,11 @@ import { initTimeControls } from "./ui/time-controls";
 // Ticket #10 scale toggle: flipping the mode re-draws the system at real
 // distances (true scale) or the playable compressed scale, then reframes the
 // camera by the system-scale ratio so the view stays coherent.
+// Ticket #12 soundscape: a procedural ambient pad plus UI blips, muted by a
+// toggle in the control bar. Browsers block autoplay, so the AudioContext is
+// created on load and resumed by the first user gesture; the UI modules blip
+// at their own interaction points and the seams below mirror the state for
+// the e2e suite.
 
 const app = document.getElementById("app");
 if (!app) throw new Error("missing #app mount point");
@@ -30,12 +36,13 @@ const clock = new SimClock({ daysSinceJ2000: dateToDaysSinceJ2000(new Date()) })
 // Ticket #6 time controls: the bottom-center control bar (pause, warp
 // slider, presets), keyboard shortcuts, and tab-blur pause all write to the
 // clock; the corner readout below mirrors it every frame.
-initTimeControls(clock);
+const soundscape = initSoundscape();
+initTimeControls(clock, soundscape);
 
 // Ticket #9 fact card: opens when a body is inspected and closes when focus
 // is released (clicking away in the scene). Escape and the card's own close
 // button are handled inside the card module.
-const factCard = initFactCard();
+const factCard = initFactCard(soundscape);
 
 let solarSystem!: SolarSystemScene;
 const cameraRig = new CameraRig(
@@ -109,6 +116,7 @@ window.addEventListener("resize", () => {
 let booted = false;
 let lastSimDateIso = "";
 let lastCameraText = "";
+let lastAudioText = "";
 const bootStatus = document.getElementById("boot-status");
 const simDateEl = document.getElementById("sim-date");
 const cameraStateEl = document.getElementById("camera-state");
@@ -119,6 +127,8 @@ const e2eScene = window as unknown as {
   __bodyPosition?: (name: string) => Vec3 | null;
   __bodyScale?: (name: string) => number | null;
 };
+const e2eAudio = window as unknown as { __soundscape?: SoundscapeState };
+const audioStatusEl = document.getElementById("audio-status");
 
 rosterStatus!.dataset.bodies = String(solarSystem.bodyCount);
 rosterStatus!.dataset.belt = String(solarSystem.beltParticleCount);
@@ -160,6 +170,17 @@ renderer.setAnimationLoop(() => {
   if (cameraText !== lastCameraText) {
     lastCameraText = cameraText;
     if (cameraStateEl) cameraStateEl.textContent = cameraText;
+  }
+
+  // Ticket #12 audio seam: mirror the live soundscape state (context state,
+  // mute flag, blip counts) to the window and a short string to the hidden
+  // #audio-status element, so the soundscape e2e spec can observe what was
+  // actually played.
+  e2eAudio.__soundscape = soundscape.state;
+  const audioText = `${soundscape.state.contextState}${soundscape.muted ? ",muted" : ""}`;
+  if (audioText !== lastAudioText) {
+    lastAudioText = audioText;
+    if (audioStatusEl) audioStatusEl.textContent = audioText;
   }
 
   if (!booted) {
