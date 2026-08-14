@@ -11,6 +11,16 @@
  * play on key interactions, mute silences everything — are verified at the
  * UI-interaction seam by the e2e suite through the window.__soundscape
  * mirror.
+ *
+ * Ticket #22: the pad must evolve, not drone. The original two-bank pad
+ * crossfaded on an 83-second loop and was always on, reading as a static
+ * drone. The pad now breathes on three independent time scales that beat
+ * against each other instead of locking into a loop — every voice swells and
+ * fades on its own slow cycle (so the voicing continuously thins and
+ * re-forms, giving sparse passages), the chord banks morph over ~3.5
+ * minutes, the whole pad swells on a ~2.5-minute cycle, and a scheduled
+ * "rest" sinks it to near-silence for a few seconds every couple of minutes
+ * (jittered, so the pattern itself never repeats).
  */
 
 import { getElement } from "../ui/dom";
@@ -47,8 +57,30 @@ const PAD_BANKS: number[][] = [
 ];
 const PAD_VOICE_GAIN = 0.03;
 const PAD_DETUNE_CENTS = 4;
-/** Crossfade period of the chord banks (~83 s per full cycle). */
-const PAD_CROSSFADE_HZ = 0.012;
+/** Crossfade period of the chord banks (~3.5 min per full cycle): the
+ *  harmony morphs slower than the old 83 s loop (ticket #22). */
+const PAD_CROSSFADE_HZ = 1 / 210;
+/** Per-voice breathing (ticket #22): each voice's gain rides a slow sine
+ *  between silence and PAD_VOICE_GAIN on its own incommensurate rate, so the
+ *  chord voicing continuously thins out and re-forms instead of sustaining
+ *  one static texture. */
+const PAD_BREATH_HZ_MIN = 1 / 240; // slowest voice cycle: 4 min
+const PAD_BREATH_HZ_MAX = 1 / 90; // fastest voice cycle: 90 s
+const PAD_BREATH_DEPTH = 0.5; // voice gain swings ±50% around its center
+/** Global swell (ticket #22): the whole pad (voices + noise air bed) swells
+ *  and sinks on a ~2.5 min cycle, so it breathes as one body. */
+const PAD_SWELL_HZ = 1 / 150;
+const PAD_SWELL_CENTER = 0.55;
+const PAD_SWELL_DEPTH = 0.45; // swell gain ∈ [0.1, 1.0]
+/** Occasional near-silence (ticket #22): a scheduled "rest" sinks the pad to
+ *  near-silence for a few seconds roughly every couple of minutes. */
+const PAD_REST_FIRST_S = 8; // first rest shortly after the pad establishes
+const PAD_REST_PERIOD_MS = 140_000; // ~2.3 min between rests
+const PAD_REST_PERIOD_JITTER_MS = 45_000; // ±45 s, so rests never lock into a loop
+const PAD_REST_NADIR = 0.02; // near-silent floor during a rest
+const PAD_REST_FADE_S = 4; // seconds to sink to the nadir
+const PAD_REST_HOLD_S = 7; // seconds held near-silent
+const PAD_REST_RISE_S = 10; // seconds to swell back up
 /** Sweep of the shared pad lowpass, centered on 620 Hz. */
 const PAD_SWEEP_HZ = 0.025;
 const PAD_SWEEP_DEPTH = 160;
@@ -100,15 +132,18 @@ function createEngine(): {
 /**
  * The ambient pad: two chord banks crossfaded by one slow LFO, through a
  * shared lowpass whose cutoff slowly sweeps, plus a faint filtered-noise air
- * bed. Every node stays well under the master's unity gain, so the pad reads
- * as a subtle backdrop rather than music.
+ * bed. Ticket #22 shapes it to evolve rather than drone — every voice
+ * breathes on its own slow cycle (startVoice), the banks morph over ~3.5
+ * minutes, the whole pad swells on a ~2.5-minute cycle, and a scheduled rest
+ * sinks it to near-silence every couple of minutes. The pad stages stay well
+ * under the master's unity gain, so the pad reads as a subtle backdrop
+ * rather than music.
  */
 function startPad(ctx: AudioContext, master: GainNode): void {
   const padFilter = ctx.createBiquadFilter();
   padFilter.type = "lowpass";
   padFilter.frequency.value = 620;
   padFilter.Q.value = 0.6;
-  padFilter.connect(master);
 
   const sweep = ctx.createOscillator();
   sweep.frequency.value = PAD_SWEEP_HZ;
@@ -119,13 +154,14 @@ function startPad(ctx: AudioContext, master: GainNode): void {
 
   const noise = createNoiseSource(ctx);
   const noiseGain = ctx.createGain();
-  noiseGain.gain.value = 0.01;
+  noiseGain.gain.value = 0.008;
   noise.connect(noiseGain);
   noiseGain.connect(padFilter);
 
   // One LFO crossfades the two banks: bank A rides 0.5 + 0.5·lfo, bank B
   // 0.5 − 0.5·lfo, so their gains always sum to unity and the harmony
-  // breathes without ever going silent.
+  // breathes without ever going silent. Slowed to ~3.5 min per cycle so the
+  // morphing is gradual (ticket #22).
   const lfo = ctx.createOscillator();
   lfo.frequency.value = PAD_CROSSFADE_HZ;
   const lfoAmp = ctx.createGain();
@@ -147,9 +183,31 @@ function startPad(ctx: AudioContext, master: GainNode): void {
     for (const freq of PAD_BANKS[bank]) startVoice(ctx, freq, bankGain);
   }
 
+  // Ticket #22: the pad's global breathing lives between the filter and the
+  // master, so the voices and the noise air bed swell and rest as one body.
+  // Two gain stages in series (gains multiply), so the LFO-driven swell and
+  // the scheduled rests never interfere with each other's automation.
+  const swellGain = ctx.createGain();
+  swellGain.gain.value = PAD_SWELL_CENTER;
+  const swell = ctx.createOscillator();
+  swell.frequency.value = PAD_SWELL_HZ;
+  const swellAmp = ctx.createGain();
+  swellAmp.gain.value = PAD_SWELL_DEPTH;
+  swell.connect(swellAmp);
+  swellAmp.connect(swellGain.gain);
+  padFilter.connect(swellGain);
+
+  const restGain = ctx.createGain();
+  restGain.gain.value = 1;
+  swellGain.connect(restGain);
+  restGain.connect(master);
+
+  startRests(ctx, restGain);
+
   lfo.start();
   sweep.start();
   noise.start();
+  swell.start();
 }
 
 function startVoice(ctx: AudioContext, freq: number, out: GainNode): void {
@@ -157,11 +215,56 @@ function startVoice(ctx: AudioContext, freq: number, out: GainNode): void {
   osc.type = "sine";
   osc.frequency.value = freq;
   osc.detune.value = (Math.random() * 2 - 1) * PAD_DETUNE_CENTS;
+
+  // Ticket #22: each voice breathes on its own slow, incommensurate cycle —
+  // its gain rides a sine between silence and PAD_VOICE_GAIN — so the chord
+  // voicing continuously thins and re-forms (sparse passages) instead of
+  // sustaining one static texture.
   const gain = ctx.createGain();
-  gain.gain.value = PAD_VOICE_GAIN;
+  gain.gain.value = PAD_VOICE_GAIN * (1 - PAD_BREATH_DEPTH);
+  const breath = ctx.createOscillator();
+  breath.frequency.value =
+    PAD_BREATH_HZ_MIN + Math.random() * (PAD_BREATH_HZ_MAX - PAD_BREATH_HZ_MIN);
+  const breathAmp = ctx.createGain();
+  breathAmp.gain.value = PAD_VOICE_GAIN * PAD_BREATH_DEPTH;
+  breath.connect(breathAmp);
+  breathAmp.connect(gain.gain);
+
   osc.connect(gain);
   gain.connect(out);
   osc.start();
+  breath.start();
+}
+
+/**
+ * Occasional near-silence (ticket #22): a self-scheduling pattern of gain
+ * ramps that sinks the pad to PAD_REST_NADIR for a few seconds roughly every
+ * PAD_REST_PERIOD_MS, with the interval, fade, hold and rise all jittered so
+ * the pattern breathes instead of locking into a loop. Every event is
+ * scheduled on the audio clock well ahead of its time, so scheduler jitter
+ * never clicks or gaps the audio; while the context is suspended (autoplay
+ * policy) the clock stands still and the events simply play once resumed.
+ */
+function startRests(ctx: AudioContext, restGain: GainNode): void {
+  const period = PAD_REST_PERIOD_MS / 1000;
+  const jitter = PAD_REST_PERIOD_JITTER_MS / 1000;
+  let nextRest = ctx.currentTime + PAD_REST_FIRST_S;
+
+  const schedule = (): void => {
+    if (nextRest - ctx.currentTime > 15) return; // horizon already covered
+    const t0 = nextRest;
+    const fade = PAD_REST_FADE_S + Math.random() * 3;
+    const hold = PAD_REST_HOLD_S + Math.random() * 4;
+    const rise = PAD_REST_RISE_S + Math.random() * 4;
+    restGain.gain.setValueAtTime(1, t0);
+    restGain.gain.linearRampToValueAtTime(PAD_REST_NADIR, t0 + fade);
+    restGain.gain.setValueAtTime(PAD_REST_NADIR, t0 + fade + hold);
+    restGain.gain.linearRampToValueAtTime(1, t0 + fade + hold + rise);
+    nextRest = t0 + period + (Math.random() * 2 - 1) * jitter;
+  };
+
+  schedule();
+  setInterval(schedule, 2000);
 }
 
 /** Two seconds of white noise, looped — the pad's faint air bed. */
@@ -248,4 +351,3 @@ export function initSoundscape(): Soundscape {
 
   return { blip, state };
 }
-
