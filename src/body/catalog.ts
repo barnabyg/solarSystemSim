@@ -18,11 +18,53 @@
 
 import type { DwarfName, MoonName, PlanetName } from "../orbit/elements";
 
+/**
+ * Atmosphere rim-glow and haze (ticket #11): the color of the glow that
+ * fringes a body's day-lit limb, and its intensity. Bodies with real
+ * atmospheres get one (Venus' thick yellow-white, Earth's blue, the gas
+ * giants' pale bands, Titan's orange haze); airless bodies have none.
+ */
+export interface AtmosphereVisual {
+  /** Rim-glow color. */
+  color: number;
+  /** Rim-glow strength; thicker atmospheres glow brighter. */
+  intensity: number;
+}
+
+/**
+ * One concentric ring band (ticket #11), in units of the body's radius. A
+ * band with opacity 0 is a gap — e.g. the Cassini division between Saturn's
+ * B and A rings.
+ */
+export interface RingBand {
+  /** Inner edge, in units of the body's radius. */
+  inner: number;
+  /** Outer edge, in units of the body's radius. */
+  outer: number;
+  /** Band color. */
+  color: number;
+  /** Band opacity; 0 marks a gap. */
+  opacity: number;
+}
+
+/**
+ * Ring system for a body (ticket #11): bands ordered from innermost to
+ * outermost, radii in units of the body's radius so the system scales with
+ * the body's display radius in both scale modes.
+ */
+export interface RingVisual {
+  bands: RingBand[];
+}
+
 /** Physical equatorial radius [km], published value. */
 export interface BodyVisual {
   radiusKm: number;
   /** Stylized surface color. */
   color: number;
+  /** Optional atmosphere rim-glow and haze (ticket #11). */
+  atmosphere?: AtmosphereVisual;
+  /** Optional ring system, radii in units of the body's radius (ticket #11). */
+  rings?: RingVisual;
 }
 
 /**
@@ -80,13 +122,55 @@ export const SUN_FACTS: BodyFacts = {
 
 export const PLANET_VISUALS: Record<PlanetName, BodyVisual> = {
   Mercury: { radiusKm: 2439.7, color: 0x9b9b9b },
-  Venus: { radiusKm: 6051.8, color: 0xe6c489 },
-  Earth: { radiusKm: 6371.0, color: 0x3d6fd6 },
-  Mars: { radiusKm: 3389.5, color: 0xc05b35 },
-  Jupiter: { radiusKm: 69911.0, color: 0xd8a879 },
-  Saturn: { radiusKm: 58232.0, color: 0xe3c78e },
-  Uranus: { radiusKm: 25362.0, color: 0x9fd9e0 },
-  Neptune: { radiusKm: 24622.0, color: 0x4a6cd4 }
+  Venus: {
+    radiusKm: 6051.8,
+    color: 0xe6c489,
+    atmosphere: { color: 0xf2e0b0, intensity: 1.4 }
+  },
+  Earth: {
+    radiusKm: 6371.0,
+    color: 0x3d6fd6,
+    atmosphere: { color: 0x7ab8ff, intensity: 1.0 }
+  },
+  Mars: {
+    radiusKm: 3389.5,
+    color: 0xc05b35,
+    atmosphere: { color: 0xe0a080, intensity: 0.45 }
+  },
+  Jupiter: {
+    radiusKm: 69911.0,
+    color: 0xd8a879,
+    atmosphere: { color: 0xe8cfa8, intensity: 0.35 }
+  },
+  Saturn: {
+    radiusKm: 58232.0,
+    color: 0xe3c78e,
+    atmosphere: { color: 0xf0dfae, intensity: 0.4 },
+    // Real ring radii in Saturn radii (Rs = 60,268 km): D 1.11-1.24, C
+    // 1.24-1.53, B 1.53-1.95, Cassini division 1.95-2.03 (a gap), A
+    // 2.03-2.27, F 2.32. Band opacities are stylized: B and A brightest,
+    // C and D faint, the division empty.
+    rings: {
+      bands: [
+        { inner: 1.11, outer: 1.24, color: 0x8a8278, opacity: 0.35 },
+        { inner: 1.24, outer: 1.53, color: 0xa89a86, opacity: 0.55 },
+        { inner: 1.53, outer: 1.95, color: 0xd8c49a, opacity: 0.95 },
+        { inner: 1.95, outer: 2.03, color: 0x000000, opacity: 0 },
+        { inner: 2.03, outer: 2.27, color: 0xcbbd9a, opacity: 0.85 },
+        { inner: 2.27, outer: 2.33, color: 0x9a908a, opacity: 0.3 }
+      ]
+    }
+  },
+  Uranus: {
+    radiusKm: 25362.0,
+    color: 0x9fd9e0,
+    atmosphere: { color: 0xb8ecf0, intensity: 0.6 }
+  },
+  Neptune: {
+    radiusKm: 24622.0,
+    color: 0x4a6cd4,
+    atmosphere: { color: 0x6a8ff0, intensity: 0.65 }
+  }
 };
 
 export const PLANET_FACTS: Record<PlanetName, BodyFacts> = {
@@ -172,7 +256,11 @@ export const MOON_VISUALS: Record<MoonName, BodyVisual> = {
   Europa: { radiusKm: 1560.8, color: 0xc9b8a0 },
   Ganymede: { radiusKm: 2631.2, color: 0x9a8a72 },
   Callisto: { radiusKm: 2410.3, color: 0x6b5f4f },
-  Titan: { radiusKm: 2574.76, color: 0xd9a75e },
+  Titan: {
+    radiusKm: 2574.76,
+    color: 0xd9a75e,
+    atmosphere: { color: 0xe8a860, intensity: 0.9 }
+  },
   Enceladus: { radiusKm: 252.1, color: 0xe8ece8 },
   Mimas: { radiusKm: 198.2, color: 0xc8c8c8 },
   Miranda: { radiusKm: 235.8, color: 0x8f9aa8 },

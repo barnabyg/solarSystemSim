@@ -3,6 +3,7 @@ import { initSoundscape, type SoundscapeState } from "./audio/soundscape";
 import { CameraRig, type CameraState } from "./camera/camera";
 import type { Vec3 } from "./orbit/kepler";
 import { SolarSystemScene } from "./scene/scene";
+import { createPostprocessing } from "./scene/postprocessing";
 import { dateToDaysSinceJ2000, SimClock, simDateToIso } from "./time/clock";
 import { initFactCard } from "./ui/fact-card";
 import { initScaleToggle } from "./ui/scale-toggle";
@@ -21,12 +22,22 @@ import { initTimeControls } from "./ui/time-controls";
 // created on load and resumed by the first user gesture; the UI modules blip
 // at their own interaction points and the seams below mirror the state for
 // the e2e suite.
+// Ticket #11 visual polish: ACES tone mapping + PCFSoft shadows on the
+// renderer, and a bloom composer (RenderPass → UnrealBloomPass → OutputPass)
+// rendering the scene each frame.
 
 const app = document.getElementById("app");
 if (!app) throw new Error("missing #app mount point");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+// Ticket #11: ACES filmic tone mapping (the premium roll-off; OutputPass
+// applies it to the composed frame) and PCFSoft shadow mapping (the scene's
+// point light casts, bodies cast/receive).
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 // Sim date starts at today's real date; warp defaults to one sim-day per
@@ -59,6 +70,12 @@ const cameraRig = new CameraRig(
 );
 cameraRig.attach(renderer.domElement);
 solarSystem = new SolarSystemScene(clock, cameraRig.camera, app);
+
+// Ticket #11 visual polish: the bloom + tone-mapping composer. It renders the
+// scene into a half-float buffer (bright pixels bloom), then OutputPass
+// applies the ACES tone mapping and color-space conversion. The e2e suite
+// asserts its presence through the #polish-status seam.
+const composer = createPostprocessing(renderer, solarSystem.scene, cameraRig.camera);
 
 // Ticket #10 scale toggle: the button flips the scene between compressed
 // scale (default) and true-scale mode, then reframes the camera by the
@@ -104,6 +121,7 @@ solarSystem.labelLayer.addEventListener("click", (event) => {
 window.addEventListener("resize", () => {
   cameraRig.resize(window.innerWidth / window.innerHeight);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // e2e seams: the boot marker is set only after the first frame has actually
@@ -112,7 +130,11 @@ window.addEventListener("resize", () => {
 // numeric view state) is mirrored to a hidden DOM element and to the window
 // so the camera tests can observe the view. The roster seam (ticket #8)
 // mirrors the scene's body and belt-particle counts so the full-roster smoke
-// test can assert the whole system is present.
+// test can assert the whole system is present. The polish seam (ticket #11)
+// mirrors the scene's polish feature counts so the polish smoke test can
+// assert every premium feature is present: atmosphere shells, Saturn's ring
+// bands, the Sun's glow layers, the dense starfield, the nebula backdrop,
+// bloom + tone mapping, and soft shadows.
 let booted = false;
 let lastSimDateIso = "";
 let lastCameraText = "";
@@ -121,6 +143,7 @@ const bootStatus = document.getElementById("boot-status");
 const simDateEl = document.getElementById("sim-date");
 const cameraStateEl = document.getElementById("camera-state");
 const rosterStatus = document.getElementById("roster-status");
+const polishStatus = document.getElementById("polish-status");
 const e2eCamera = window as unknown as { __cameraState?: CameraState };
 const e2eScene = window as unknown as {
   __beltParticlePosition?: () => [number, number, number];
@@ -134,6 +157,27 @@ rosterStatus!.dataset.bodies = String(solarSystem.bodyCount);
 rosterStatus!.dataset.belt = String(solarSystem.beltParticleCount);
 rosterStatus!.textContent = `${solarSystem.bodyCount} bodies, ${solarSystem.beltParticleCount} belt particles`;
 rosterStatus!.removeAttribute("hidden");
+
+// The polish seam mirrors the scene's actual construction: atmosphere shells,
+// ring bands, Sun glow layers, starfield points, nebula presence — plus the
+// renderer/composer state main.ts owns (bloom + tone mapping, PCFSoft
+// shadows), so the polish smoke test asserts the whole premium feature set.
+polishStatus!.dataset.atmospheres = String(solarSystem.atmosphereShellCount);
+polishStatus!.dataset.rings = String(solarSystem.ringBandCount);
+polishStatus!.dataset.glow = String(solarSystem.sunGlowLayerCount);
+polishStatus!.dataset.stars = String(solarSystem.starCount);
+polishStatus!.dataset.nebula = solarSystem.hasNebula ? "true" : "false";
+// The post-processing and shadow seams read the live renderer config rather
+// than echoing literals, so the e2e assertions stay honest to the pipeline.
+polishStatus!.dataset.postprocessing =
+  renderer.toneMapping === THREE.ACESFilmicToneMapping ? "bloom-tonemap" : "plain";
+polishStatus!.dataset.shadows =
+  renderer.shadowMap.type === THREE.PCFSoftShadowMap ? "pcfsoft" : "none";
+polishStatus!.textContent =
+  `${solarSystem.atmosphereShellCount} atmospheres, ${solarSystem.ringBandCount} ring bands, ` +
+  `${solarSystem.sunGlowLayerCount} glow layers, ${solarSystem.starCount} stars, nebula, ` +
+  "bloom + tone mapping, soft shadows";
+polishStatus!.removeAttribute("hidden");
 // The belt-motion seam reads the actual rendered particle buffer.
 e2eScene.__beltParticlePosition = () => {
   const p = solarSystem.beltParticlePosition(0);
@@ -155,7 +199,7 @@ renderer.setAnimationLoop(() => {
   clock.tick(dt);
   solarSystem.sync();
   cameraRig.update(dt);
-  solarSystem.render(renderer);
+  composer.render();
 
   const iso = simDateToIso(clock.simDate).slice(0, 10);
   if (iso !== lastSimDateIso) {

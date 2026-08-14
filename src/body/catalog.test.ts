@@ -374,3 +374,82 @@ describe("data integrity: every entry matches published values", () => {
     });
   }
 });
+
+// ---- Visual polish data (ticket #11) ------------------------------------
+//
+// Atmosphere and ring visuals are stylized, so the integrity tests pin the
+// structure (which bodies have them, valid colors/intensities, ordered and
+// gapped ring bands within the real radial extent) rather than exact values.
+
+/** Bodies with real atmospheres worth rendering (NSSDC fact sheets). */
+const ATMOSPHERE_BODIES = ["Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Titan"];
+
+/** Every body's visual, keyed by canonical name (Sun, planets, moons, dwarfs). */
+const ALL_VISUALS: Record<string, BodyVisual> = {
+  [SUN_NAME]: SUN,
+  ...PLANET_VISUALS,
+  ...MOON_VISUALS,
+  ...DWARF_VISUALS
+};
+
+describe("visual polish data (ticket #11)", () => {
+  it("gives every atmosphere-bearing body an atmosphere and no others", () => {
+    const withAtmosphere = Object.entries(ALL_VISUALS)
+      .filter(([, v]) => v.atmosphere !== undefined)
+      .map(([name]) => name)
+      .sort();
+    expect(withAtmosphere).toEqual([...ATMOSPHERE_BODIES].sort());
+  });
+
+  it("validates every atmosphere's color and intensity", () => {
+    for (const visual of Object.values(ALL_VISUALS)) {
+      if (!visual.atmosphere) continue;
+      expect(Number.isInteger(visual.atmosphere.color)).toBe(true);
+      expect(visual.atmosphere.color).toBeGreaterThanOrEqual(0);
+      expect(visual.atmosphere.color).toBeLessThanOrEqual(0xffffff);
+      expect(visual.atmosphere.intensity).toBeGreaterThan(0);
+      expect(Number.isFinite(visual.atmosphere.intensity)).toBe(true);
+    }
+  });
+
+  it("gives rings only to Saturn", () => {
+    const withRings = Object.entries(ALL_VISUALS)
+      .filter(([, v]) => v.rings !== undefined)
+      .map(([name]) => name);
+    expect(withRings).toEqual(["Saturn"]);
+  });
+
+  it("orders Saturn's ring bands within the real radial extent", () => {
+    const bands = PLANET_VISUALS.Saturn.rings!.bands;
+    expect(bands.length).toBeGreaterThanOrEqual(4);
+    // Ordered, non-overlapping bands, all inside the real ring system
+    // (D ring at ~1.11 Rs to F ring at ~2.32 Rs).
+    let previousOuter = 0;
+    for (const band of bands) {
+      expect(band.inner).toBeGreaterThanOrEqual(previousOuter);
+      expect(band.outer).toBeGreaterThan(band.inner);
+      expect(band.inner).toBeGreaterThanOrEqual(1.0);
+      expect(band.outer).toBeLessThanOrEqual(2.5);
+      previousOuter = band.outer;
+    }
+  });
+
+  it("keeps a visible gap in Saturn's rings (the Cassini division)", () => {
+    const bands = PLANET_VISUALS.Saturn.rings!.bands;
+    const gaps = bands.filter((b) => b.opacity === 0);
+    expect(gaps.length).toBeGreaterThanOrEqual(1);
+    // The division sits between the B and A rings (~1.95-2.03 Rs).
+    expect(gaps[0].inner).toBeGreaterThanOrEqual(1.9);
+    expect(gaps[0].outer).toBeLessThanOrEqual(2.1);
+  });
+
+  it("validates every ring band's color and opacity", () => {
+    for (const band of PLANET_VISUALS.Saturn.rings!.bands) {
+      expect(Number.isInteger(band.color)).toBe(true);
+      expect(band.color).toBeGreaterThanOrEqual(0);
+      expect(band.color).toBeLessThanOrEqual(0xffffff);
+      expect(band.opacity).toBeGreaterThanOrEqual(0);
+      expect(band.opacity).toBeLessThanOrEqual(1);
+    }
+  });
+});
