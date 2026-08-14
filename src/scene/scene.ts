@@ -1,30 +1,64 @@
 /**
- * Scene module: builds the Three.js scene — the Sun and eight planets on
- * their Keplerian orbits, orbit lines, name labels, and a basic starfield
- * backdrop (ticket #4). Positions come from the pure orbit/scale modules at
- * the clock's sim date. The camera is owned by the camera rig (ticket #5);
- * the scene receives it for rendering and label projection, and supplies the
- * rig's hooks — body positions, focus distances, and picking. The scene is
- * thin wiring: it is trusted within smoke-level checks (ADR-0004), not
+ * Scene module: builds the Three.js scene — the Sun, eight planets, thirteen
+ * moons, five dwarf planets and the asteroid belt on their Keplerian orbits,
+ * with orbit lines, name labels, and a basic starfield backdrop (tickets #4
+ * and #8). Positions come from the pure orbit/scale modules at the clock's
+ * sim date. The camera is owned by the camera rig (ticket #5); the scene
+ * receives it for rendering and label projection, and supplies the rig's
+ * hooks — body positions, focus distances, and picking. The scene is thin
+ * wiring: it is trusted within smoke-level checks (ADR-0004), not
  * unit-tested.
  */
 
 import * as THREE from "three";
-import { PLANET_VISUALS, SUN, SUN_NAME } from "../body/catalog";
-import { PLANET_ELEMENTS, type PlanetName } from "../orbit/elements";
-import { orbitalPeriodDays, positionAt, type Vec3 } from "../orbit/kepler";
-import { compressedRadius, eclipticToWorld, scalePosition } from "../scale/scale";
+import {
+  ASTEROID_BELT,
+  DWARF_VISUALS,
+  MOON_VISUALS,
+  PLANET_VISUALS,
+  SUN,
+  SUN_NAME,
+  type BodyVisual
+} from "../body/catalog";
+import {
+  DWARF_ELEMENTS,
+  MOON_ELEMENTS,
+  PLANET_ELEMENTS,
+  type DwarfName,
+  type MoonName,
+  type PlanetName
+} from "../orbit/elements";
+import { orbitalPeriodDays, positionAt, type OrbitalElements, type Vec3 } from "../orbit/kepler";
+import {
+  compressedRadius,
+  eclipticToWorld,
+  scaleMoonPosition,
+  scalePosition
+} from "../scale/scale";
 import type { SimClock } from "../time/clock";
 
 /** Sample points per orbit line; 256 keeps lines smooth and rebuilds cheap. */
 const ORBIT_SEGMENTS = 256;
 /**
- * Rebuild orbit lines when the sim date has drifted this many days. Element
- * rates are per century (~1e-4 deg/day of shape drift), so a month of sim
- * time is invisible — and every planet's period is longer than 30 days, so a
- * body always sits exactly on its freshly sampled line.
+ * Rebuild heliocentric orbit lines when the sim date has drifted this many
+ * days. Element rates are per century (~1e-4 deg/day of shape drift), so a
+ * month of sim time is invisible — and every body's period is longer than 30
+ * days, so a body always sits exactly on its freshly sampled line. Moon
+ * orbit lines never rebuild: the moon elements carry no shape rates, so the
+ * planetocentric path is constant and just rides along with its primary.
  */
 const ORBIT_REBUILD_DAYS = 30;
+
+/**
+ * A moon's rendered state: its mesh (a child of `group`), the group that
+ * rides along at the primary's world position, and the primary it orbits.
+ * The planetocentric orbit line lives in the same group.
+ */
+interface MoonRender {
+  mesh: THREE.Mesh;
+  group: THREE.Object3D;
+  primary: PlanetName | DwarfName;
+}
 
 export class SolarSystemScene {
   readonly scene = new THREE.Scene();
@@ -34,17 +68,24 @@ export class SolarSystemScene {
 
   private readonly sunMesh: THREE.Mesh;
   private readonly planetMeshes = new Map<PlanetName, THREE.Mesh>();
-  private readonly orbitLines = new Map<PlanetName, THREE.Line>();
-  private readonly labels = new Map<PlanetName, HTMLDivElement>();
-  private readonly sunLabel: HTMLDivElement;
+  private readonly dwarfMeshes = new Map<DwarfName, THREE.Mesh>();
+  private readonly moons = new Map<MoonName, MoonRender>();
+  /** Heliocentric orbit lines (planets + dwarf planets), by body name. */
+  private readonly orbitLines = new Map<PlanetName | DwarfName, THREE.Line>();
+  private readonly labels = new Map<string, HTMLDivElement>();
+  private readonly belt: THREE.Points;
+  /** One stylized particle per asteroid, on real Keplerian elements. */
+  private readonly beltParticles: OrbitalElements[];
+  private readonly beltPositions: Float32Array;
   private readonly clock: SimClock;
-  /** Meshes the camera rig picks against (Sun + planets). */
+  /** Meshes the camera rig picks against (Sun + planets + dwarfs + moons). */
   private readonly pickables: THREE.Object3D[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pickNdc = new THREE.Vector2();
-  /** Sim date at which the orbit lines were last sampled. */
+  /** Sim date at which the heliocentric orbit lines were last sampled. */
   private lineEpochDays = -Infinity;
   private readonly tmp = new THREE.Vector3();
+  private readonly moonWorld = new THREE.Vector3();
 
   constructor(clock: SimClock, camera: THREE.PerspectiveCamera, root: HTMLElement) {
     this.clock = clock;
@@ -67,16 +108,59 @@ export class SolarSystemScene {
       this.labels.set(name, this.createLabel(name));
     }
 
-    this.sunLabel = this.createLabel(SUN_NAME);
-    this.pickables.push(this.sunMesh, ...this.planetMeshes.values());
+    for (const name of Object.keys(DWARF_ELEMENTS) as DwarfName[]) {
+      const mesh = this.buildDwarf(name);
+      this.dwarfMeshes.set(name, mesh);
+      this.scene.add(mesh);
+      this.labels.set(name, this.createLabel(name));
+    }
+
+    for (const name of Object.keys(MOON_ELEMENTS) as MoonName[]) {
+      const moon = this.buildMoon(name);
+      this.moons.set(name, moon);
+      this.scene.add(moon.group);
+      this.labels.set(name, this.createLabel(name));
+    }
+
+    this.labels.set(SUN_NAME, this.createLabel(SUN_NAME));
+    this.pickables.push(
+      this.sunMesh,
+      ...this.planetMeshes.values(),
+      ...this.dwarfMeshes.values(),
+      ...[...this.moons.values()].map((m) => m.mesh)
+    );
+
+    const belt = this.buildBelt();
+    this.belt = belt.points;
+    this.beltParticles = belt.particles;
+    this.beltPositions = belt.positions;
+    this.scene.add(this.belt);
+
     this.addStarfield();
     this.rebuildOrbitLines();
   }
 
+  /** Number of labeled, focusable bodies: Sun + planets + moons + dwarfs. */
+  get bodyCount(): number {
+    return this.labels.size;
+  }
+
+  /** Number of particles in the stylized asteroid belt. */
+  get beltParticleCount(): number {
+    return this.beltParticles.length;
+  }
+
+  /** Current world position of a belt particle — the e2e motion seam. */
+  beltParticlePosition(index: number): Vec3 {
+    const i = index * 3;
+    return { x: this.beltPositions[i], y: this.beltPositions[i + 1], z: this.beltPositions[i + 2] };
+  }
+
   /**
    * Advance the scene one frame: move every body to its position at the
-   * clock's current sim date and keep the labels glued to the bodies. Call
-   * once per frame, before the camera rig's update and the render.
+   * clock's current sim date, keep the belt particles on their orbits, and
+   * keep the labels glued to the bodies. Call once per frame, before the
+   * camera rig's update and the render.
    */
   sync(): void {
     const t = this.clock.simDate;
@@ -85,7 +169,22 @@ export class SolarSystemScene {
       mesh.position.set(world.x, world.y, world.z);
       this.syncLabel(this.labels.get(name)!, world);
     }
-    this.syncLabel(this.sunLabel, { x: 0, y: 0, z: 0 });
+    for (const [name, mesh] of this.dwarfMeshes) {
+      const world = eclipticToWorld(scalePosition(positionAt(DWARF_ELEMENTS[name], t)));
+      mesh.position.set(world.x, world.y, world.z);
+      this.syncLabel(this.labels.get(name)!, world);
+    }
+    for (const [name, moon] of this.moons) {
+      // The group rides on the primary's world position; the mesh holds the
+      // planetocentric offset, so the moon orbits the primary as it moves.
+      const primaryWorld = this.bodyWorldPosition(moon.primary);
+      moon.group.position.set(primaryWorld!.x, primaryWorld!.y, primaryWorld!.z);
+      const offset = this.moonOffset(name, t);
+      moon.mesh.position.set(offset.x, offset.y, offset.z);
+      this.syncLabel(this.labels.get(name)!, this.moonWorldPosition(name)!);
+    }
+    this.syncLabel(this.labels.get(SUN_NAME)!, { x: 0, y: 0, z: 0 });
+    this.syncBelt(t);
 
     if (Math.abs(t - this.lineEpochDays) >= ORBIT_REBUILD_DAYS) {
       this.rebuildOrbitLines();
@@ -97,12 +196,17 @@ export class SolarSystemScene {
     renderer.render(this.scene, this.camera);
   }
 
-  /** World position of a body (Sun or planet), or null if unknown. */
+  /** World position of a body (Sun, planet, dwarf, or moon), or null if
+   *  unknown. */
   bodyWorldPosition(name: string): Vec3 | null {
     if (name === SUN_NAME) return { x: 0, y: 0, z: 0 };
-    const mesh = this.planetMeshes.get(name as PlanetName);
-    if (!mesh) return null;
-    return { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z };
+    const planet = this.planetMeshes.get(name as PlanetName);
+    if (planet) return { x: planet.position.x, y: planet.position.y, z: planet.position.z };
+    const dwarf = this.dwarfMeshes.get(name as DwarfName);
+    if (dwarf) return { x: dwarf.position.x, y: dwarf.position.y, z: dwarf.position.z };
+    const moon = this.moons.get(name as MoonName);
+    if (moon) return this.moonWorldPosition(name as MoonName);
+    return null;
   }
 
   /** Preferred focus orbit distance for a body, in world units. */
@@ -115,7 +219,11 @@ export class SolarSystemScene {
   /** Physical radius [km] of a body, or undefined for unknown names. */
   private bodyRadiusKm(name: string): number | undefined {
     if (name === SUN_NAME) return SUN.radiusKm;
-    return PLANET_VISUALS[name as PlanetName]?.radiusKm;
+    return (
+      PLANET_VISUALS[name as PlanetName]?.radiusKm ??
+      DWARF_VISUALS[name as DwarfName]?.radiusKm ??
+      MOON_VISUALS[name as MoonName]?.radiusKm
+    );
   }
 
   /** The body whose mesh is under a client-space screen point, or null. */
@@ -130,6 +238,7 @@ export class SolarSystemScene {
     return (hit.object.userData.name as string | undefined) ?? null;
   }
 
+  /** The sun's body mesh — the light source position anchor. */
   private buildSun(): THREE.Mesh {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(compressedRadius(SUN.radiusKm), 48, 32),
@@ -140,7 +249,7 @@ export class SolarSystemScene {
   }
 
   /** The Sun is the light source: bodies are lit from its side. A neutral
-   *  ambient keeps the dark side faintly readable so no planet disappears. */
+   *  ambient keeps the dark side faintly readable so no body disappears. */
   private addLights(): void {
     this.scene.add(new THREE.PointLight(0xfff2d9, 3, 0, 0));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -154,6 +263,81 @@ export class SolarSystemScene {
     );
     mesh.userData.name = name;
     return mesh;
+  }
+
+  private buildDwarf(name: DwarfName): THREE.Mesh {
+    const visual = DWARF_VISUALS[name];
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(compressedRadius(visual.radiusKm), 24, 12),
+      new THREE.MeshStandardMaterial({ color: visual.color })
+    );
+    mesh.userData.name = name;
+    return mesh;
+  }
+
+  /**
+   * Build a moon's frame: a group that rides on the primary's world
+   * position, holding the moon mesh (moved each frame to its planetocentric
+   * offset) and the moon's orbit line (constant shape — moon elements carry
+   * no rates — so it is sampled once and follows the primary for free).
+   */
+  private buildMoon(name: MoonName): MoonRender {
+    const orbit = MOON_ELEMENTS[name];
+    const primaryVisual = this.primaryVisual(orbit.primary);
+    const group = new THREE.Object3D();
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(compressedRadius(MOON_VISUALS[name].radiusKm), 16, 12),
+      new THREE.MeshStandardMaterial({ color: MOON_VISUALS[name].color })
+    );
+    mesh.userData.name = name;
+    group.add(mesh);
+    group.add(this.buildMoonOrbitLine(name, primaryVisual));
+    return { mesh, group, primary: orbit.primary };
+  }
+
+  /** Physical visual of a body that can be a moon's primary. */
+  private primaryVisual(primary: PlanetName | DwarfName): BodyVisual {
+    if (primary === "Pluto") return DWARF_VISUALS.Pluto;
+    return PLANET_VISUALS[primary as PlanetName];
+  }
+
+  /** Planetocentric offset of a moon at `days`, in world units. */
+  private moonOffset(name: MoonName, days: number): Vec3 {
+    const orbit = MOON_ELEMENTS[name];
+    const primary = this.primaryVisual(orbit.primary);
+    const displayRadius = compressedRadius(primary.radiusKm);
+    const offset = scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, days));
+    return eclipticToWorld(offset);
+  }
+
+  /** World position of a moon: its group's position plus its local offset. */
+  private moonWorldPosition(name: MoonName): Vec3 {
+    const moon = this.moons.get(name)!;
+    this.moonWorld.copy(moon.group.position).add(moon.mesh.position);
+    return { x: this.moonWorld.x, y: this.moonWorld.y, z: this.moonWorld.z };
+  }
+
+  private buildMoonOrbitLine(name: MoonName, primary: BodyVisual): THREE.Line {
+    const orbit = MOON_ELEMENTS[name];
+    const period = orbitalPeriodDays(orbit.elements.a0);
+    const displayRadius = compressedRadius(primary.radiusKm);
+    const points = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
+    for (let i = 0; i <= ORBIT_SEGMENTS; i++) {
+      const t = (i / ORBIT_SEGMENTS) * period;
+      const p = eclipticToWorld(
+        scaleMoonPosition(primary.radiusKm, displayRadius, positionAt(orbit.elements, t))
+      );
+      points[i * 3] = p.x;
+      points[i * 3 + 1] = p.y;
+      points[i * 3 + 2] = p.z;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(points, 3));
+    return new THREE.Line(geometry, this.orbitLineMaterial());
+  }
+
+  private orbitLineMaterial(): THREE.LineBasicMaterial {
+    return new THREE.LineBasicMaterial({ color: 0x4a5a8a, transparent: true, opacity: 0.4 });
   }
 
   private createLabel(name: string): HTMLDivElement {
@@ -181,14 +365,15 @@ export class SolarSystemScene {
 
   private rebuildOrbitLines(): void {
     this.lineEpochDays = this.clock.simDate;
-    for (const name of this.planetMeshes.keys()) {
+    const heliocentric: (PlanetName | DwarfName)[] = [
+      ...this.planetMeshes.keys(),
+      ...this.dwarfMeshes.keys()
+    ];
+    for (const name of heliocentric) {
       const points = this.sampleOrbit(name, this.lineEpochDays);
       let line = this.orbitLines.get(name);
       if (!line) {
-        line = new THREE.Line(
-          new THREE.BufferGeometry(),
-          new THREE.LineBasicMaterial({ color: 0x4a5a8a, transparent: true, opacity: 0.4 })
-        );
+        line = new THREE.Line(new THREE.BufferGeometry(), this.orbitLineMaterial());
         line.userData.name = name;
         this.orbitLines.set(name, line);
         this.scene.add(line);
@@ -200,8 +385,11 @@ export class SolarSystemScene {
   }
 
   /** Heliocentric orbit positions for one full period, in world units. */
-  private sampleOrbit(name: PlanetName, days: number): Float32Array {
-    const elements = PLANET_ELEMENTS[name];
+  private sampleOrbit(name: PlanetName | DwarfName, days: number): Float32Array {
+    const elements =
+      name in PLANET_ELEMENTS
+        ? PLANET_ELEMENTS[name as PlanetName]
+        : DWARF_ELEMENTS[name as DwarfName];
     const period = orbitalPeriodDays(elements.a0);
     const points = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
     for (let i = 0; i <= ORBIT_SEGMENTS; i++) {
@@ -212,6 +400,79 @@ export class SolarSystemScene {
       points[i * 3 + 2] = world.z;
     }
     return points;
+  }
+
+  /**
+   * Build the stylized asteroid belt (ticket #8): one point per particle,
+   * each on real Keplerian elements sampled from the catalog's belt
+   * parameters — semi-major axes in [inner, outer], small eccentricities,
+   * inclinations capped so the band stays within the catalog's vertical
+   * half-thickness, and mean motions from Kepler's third law. Positions are
+   * recomputed every frame, so the field rotates differentially — inner
+   * particles lap outer ones exactly as the real belt does.
+   */
+  private buildBelt(): { points: THREE.Points; particles: OrbitalElements[]; positions: Float32Array } {
+    const { innerRadiusAu, outerRadiusAu, halfThicknessAu, particleCount } = ASTEROID_BELT;
+    // The inclination cap keeps |z| ≲ halfThicknessAu at the belt's inner edge.
+    const maxInclination = (Math.atan2(halfThicknessAu, innerRadiusAu) * 180) / Math.PI;
+    const particles: OrbitalElements[] = [];
+    for (let i = 0; i < particleCount; i++) {
+      const a = innerRadiusAu + Math.random() * (outerRadiusAu - innerRadiusAu);
+      particles.push({
+        a0: a,
+        adot: 0,
+        e0: Math.random() * 0.15,
+        edot: 0,
+        I0: Math.random() * maxInclination,
+        Idot: 0,
+        L0: Math.random() * 360,
+        Ldot: (360 * 36525) / orbitalPeriodDays(a),
+        peri0: Math.random() * 360,
+        peridot: 0,
+        node0: Math.random() * 360,
+        nodedot: 0
+      });
+    }
+
+    const positions = new Float32Array(particleCount * 3);
+    const colors = new Float32Array(particleCount * 3);
+    const base = new THREE.Color(0x9a8f82);
+    for (let i = 0; i < particleCount; i++) {
+      const p = eclipticToWorld(scalePosition(positionAt(particles[i], this.clock.simDate)));
+      positions[i * 3] = p.x;
+      positions[i * 3 + 1] = p.y;
+      positions[i * 3 + 2] = p.z;
+      const dim = 0.5 + Math.random() * 0.5;
+      colors[i * 3] = base.r * dim;
+      colors[i * 3 + 1] = base.g * dim;
+      colors[i * 3 + 2] = base.b * dim;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    const material = new THREE.PointsMaterial({
+      size: 0.06,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false
+    });
+    return { points: new THREE.Points(geometry, material), particles, positions };
+  }
+
+  private syncBelt(t: number): void {
+    const arr = this.beltPositions;
+    for (let i = 0; i < this.beltParticles.length; i++) {
+      const p = eclipticToWorld(scalePosition(positionAt(this.beltParticles[i], t)));
+      arr[i * 3] = p.x;
+      arr[i * 3 + 1] = p.y;
+      arr[i * 3 + 2] = p.z;
+    }
+    const attribute = (this.belt.geometry as THREE.BufferGeometry).getAttribute(
+      "position"
+    ) as THREE.BufferAttribute;
+    attribute.needsUpdate = true;
   }
 
   /** A dense backdrop of fixed-size star points. */

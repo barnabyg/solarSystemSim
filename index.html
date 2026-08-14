@@ -123,6 +123,134 @@
         letter-spacing: 0.04em;
         white-space: nowrap;
       }
+      /* Right-side fact card (ticket #9): opens on inspect, closes on
+         click-away or Escape. */
+      #fact-card {
+        position: absolute;
+        top: 60px;
+        right: 16px;
+        width: 300px;
+        max-width: calc(100vw - 32px);
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: rgba(8, 12, 28, 0.86);
+        border: 1px solid rgba(140, 165, 255, 0.25);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+        color: #dfe7ff;
+        font: 400 13px/1.5 system-ui, sans-serif;
+        user-select: none;
+        z-index: 20;
+      }
+      #fact-card[hidden] {
+        display: none;
+      }
+      .fact-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      #fact-card-name {
+        margin: 0;
+        font: 600 18px/1.2 system-ui, sans-serif;
+        letter-spacing: 0.04em;
+      }
+      #fact-card-close {
+        color: #cdd8ff;
+        font: 500 15px/1 system-ui, sans-serif;
+        background: rgba(140, 165, 255, 0.1);
+        border: 1px solid rgba(140, 165, 255, 0.3);
+        border-radius: 8px;
+        padding: 3px 9px;
+        cursor: pointer;
+      }
+      #fact-card-close:hover {
+        background: rgba(140, 165, 255, 0.2);
+      }
+      .fact-list {
+        margin: 0;
+      }
+      .fact-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 5px 0;
+        border-bottom: 1px solid rgba(140, 165, 255, 0.12);
+      }
+      .fact-row dt {
+        color: #9fb0e8;
+        font-size: 12px;
+        letter-spacing: 0.03em;
+      }
+      .fact-row dd {
+        margin: 0;
+        font-weight: 600;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .vs-earth {
+        margin: 12px 0;
+      }
+      .vs-earth-title {
+        display: block;
+        color: #9fb0e8;
+        font-size: 12px;
+        letter-spacing: 0.03em;
+        margin-bottom: 6px;
+      }
+      .vs-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 4px 0;
+      }
+      .vs-row-name {
+        width: 64px;
+        flex: none;
+        font-size: 12px;
+        color: #cdd8ff;
+        text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .vs-track {
+        flex: 1;
+        height: 10px;
+        border-radius: 5px;
+        background: rgba(140, 165, 255, 0.14);
+        overflow: hidden;
+      }
+      .vs-fill {
+        height: 100%;
+        border-radius: 5px;
+        max-width: 100%;
+      }
+      .vs-earth-fill {
+        width: 64px;
+        background: #6f82cf;
+      }
+      .vs-body-fill {
+        min-width: 2px;
+        background: #ffb45a;
+      }
+      .vs-earth-label {
+        display: block;
+        margin-top: 6px;
+        color: #ffd9a8;
+        font-weight: 600;
+        font-size: 12px;
+        letter-spacing: 0.03em;
+        text-align: right;
+      }
+      .fact-fun-fact {
+        margin: 4px 0 0;
+        padding-top: 10px;
+        border-top: 1px solid rgba(140, 165, 255, 0.12);
+        color: #cdd8ff;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -140,6 +268,9 @@
     </div>
     <div id="boot-status" hidden></div>
     <div id="camera-state" hidden></div>
+    <!-- Ticket #8 roster seam: the full-roster smoke test asserts the scene's
+         actual body count and belt particle count from this element. -->
+    <div id="roster-status" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

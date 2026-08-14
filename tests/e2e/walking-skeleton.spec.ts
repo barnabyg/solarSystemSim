@@ -22,20 +22,25 @@ test("boots and shows the Sun and all eight planets with labels", async ({ page 
     await expect(page.locator(`[data-body="${name}"]`)).toBeVisible();
   }
 
-  // The overview shows the whole system: labels sit at distinct, spread-out
-  // screen positions rather than piling up at one point.
+  // The overview shows the whole system: this slice's labels sit at
+  // distinct, spread-out screen positions rather than piling up at one
+  // point. (Later slices add the moons and dwarf planets' labels, so the
+  // spread check stays scoped to this slice's nine bodies.)
   const viewport = page.viewportSize()!;
+  // Filter by name here, in the test process: `evaluateAll` runs in the
+  // browser, where module constants like BODY_NAMES are not in scope.
   const boxes = await page.locator(".body-label").evaluateAll((els) =>
     els.map((el) => {
       const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y };
+      return { name: (el as HTMLElement).dataset.body ?? "", x: r.x, y: r.y };
     })
   );
-  expect(boxes).toHaveLength(BODY_NAMES.length);
-  const uniquePositions = new Set(boxes.map((b) => `${Math.round(b.x)},${Math.round(b.y)}`));
+  const scoped = boxes.filter((b) => BODY_NAMES.includes(b.name));
+  expect(scoped).toHaveLength(BODY_NAMES.length);
+  const uniquePositions = new Set(scoped.map((b) => `${Math.round(b.x)},${Math.round(b.y)}`));
   expect(uniquePositions.size).toBe(BODY_NAMES.length);
-  const xs = boxes.map((b) => b.x);
-  const ys = boxes.map((b) => b.y);
+  const xs = scoped.map((b) => b.x);
+  const ys = scoped.map((b) => b.y);
   expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(viewport.width * 0.25);
   expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(viewport.height * 0.15);
 
